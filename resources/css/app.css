@@ -1,0 +1,30 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html,
+body,
+#app {
+    height: 100%;
+}
+
+body {
+    background: radial-gradient(120% 120% at 50% 0%, #171b30 0%, #0b0e1a 55%, #08090f 100%);
+    color: #EDEFFC;
+    font-family: 'Inter', sans-serif;
+}
+
+* {
+    scrollbar-width: thin;
+    scrollbar-color: #2A2F4A transparent;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+    }
+}
