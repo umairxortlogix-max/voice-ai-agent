@@ -55,10 +55,58 @@ class VoiceAgentController extends Controller
                 'audio_base64' => base64_encode($audio),
             ]);
         } catch (Throwable $e) {
-            Log::error('Voice agent error: '.$e->getMessage());
+            $errorDetails = $e->getMessage();
+            if (method_exists($e, 'getResponse') && $e->getResponse() !== null) {
+                $response = $e->getResponse();
+                $body = $response->getBody();
+
+                if (is_object($body) && method_exists($body, 'getContents')) {
+                    $body->seek(0);
+                    $rawBody = $body->getContents();
+                    $body->seek(0);
+
+                    if (is_string($rawBody) && trim($rawBody) !== '') {
+                        $errorDetails .= ' | '.$rawBody;
+                    }
+                }
+            }
+
+            Log::error('Voice agent error: '.$errorDetails, ['exception' => $e]);
+
+            $message = strtolower($e->getMessage());
+
+            if (str_contains($message, 'api key') || str_contains($message, 'unauthorized') || str_contains($message, 'authentication')) {
+                return response()->json([
+                    'error' => 'Your AI API key is invalid or missing. Please update the provider key and try again.',
+                ], 401);
+            }
+
+            if (str_contains($message, 'no credits remaining') || str_contains($message, 'quota') || str_contains($message, 'credit')) {
+                return response()->json([
+                    'error' => 'The AI provider has no remaining credits. Add credits or switch to a different free-tier provider.',
+                ], 429);
+            }
+
+            if (str_contains($message, '429') || str_contains($message, 'rate limit') || str_contains($message, 'too many requests')) {
+                return response()->json([
+                    'error' => 'The AI provider is rate-limited right now. Please retry in a moment or switch providers.',
+                ], 429);
+            }
+
+            if (str_contains($message, 'timed out') || str_contains($message, 'timeout')) {
+                return response()->json([
+                    'error' => 'The AI provider timed out. Please try again in a moment.',
+                ], 504);
+            }
+
+            if (str_contains($message, 'not set') || str_contains($message, 'missing')) {
+                return response()->json([
+                    'error' => 'A required API key is not configured. Please set the provider key in your environment.',
+                ], 500);
+            }
 
             return response()->json([
-                'error' => 'The voice agent hit a snag. Check your API key and try again.',
+                'error' => 'The voice agent is temporarily unavailable. Please try again shortly.',
             ], 500);
         }
     }

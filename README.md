@@ -1,8 +1,18 @@
 # Voice AI Agent — Laravel + React (Inertia)
 
-Ek real voice AI agent: mic dabao, boliye, Whisper transcribe karta hai, LLM reply
-sochta hai, aur TTS us reply ko awaz mein wapas bolta hai — modern animated UI
-(breathing orb, live waveform rings, chat transcript) ke sath.
+Ek real voice AI agent: mic dabao, boliye, speech input ko process karta hai,
+LLM reply sochta hai, aur TTS us reply ko awaz mein wapas bolta hai — modern
+animated UI (breathing orb, live waveform rings, chat transcript) ke sath.
+
+Project ab multi-provider fallback architecture support karta hai, taaki OpenAI
+credits khatam hone ya rate-limit/timeout errors par system automatic next
+provider par switch ho sake. Provider chain is tarah hai:
+
+- Primary: Groq
+- Secondary: Gemini
+- Tertiary: OpenRouter (free endpoints)
+- STT fallback: local Whisper
+- TTS fallback: Edge TTS / gTTS
 
 Is zip mein **sirf custom files** hain (controllers, services, React UI). Isse
 ek fresh Laravel project ke andar overlay karna hai, kyunke poora Laravel
@@ -61,16 +71,34 @@ php artisan key:generate
 touch database/database.sqlite   # sqlite use kar rahe hain by default
 php artisan migrate
 
-# .env mein apni OpenAI API key daal dein:
-# OPENAI_API_KEY=sk-...
+# .env mein required provider keys daalen:
+# GROQ_API_KEY=...
+# GEMINI_API_KEY=...
+# OPENROUTER_API_KEY=...
+# optional local fallbacks: python + whisper + edge-tts / gtts
 
 npm run dev        # ek terminal
 php artisan serve  # dusra terminal
 ```
 
 Ab `http://localhost:8000` kholein, mic button dabayen, browser mic
-permission allow karen, boliye, aur agent transcribe → soch → jawab bol kar
-dega.
+permission allow karen, boliye, aur agent fallback chain ke through
+transcribe → LLM → jawab → TTS ke roop mein response dega.
+
+## Multi-provider fallback strategy
+
+System ke andar fallback logic is tarah kaam karta hai:
+
+1. LLM inference primary rahega Groq (`openai/gpt-oss-20b`; fallback `openai/gpt-oss-120b`).
+2. Agar Groq 429, quota error, timeout, ya 5xx aata hai to Gemini (`gemini-2.5-flash`) par switch hota hai.
+3. Agar Gemini quota ya connection failure hota hai to OpenRouter free endpoint (`openai/gpt-oss-20b:free`) use hota hai.
+4. `ShouldRetryWithFallback()` try-catch layer ke andar exceptions detect karta hai aur `[FALLBACK_EVENT] Primary failed: ... Switching to ...` format mein log karta hai.
+5. Conversation system prompt, instructions, aur memory context provider switch ke baad bhi synchronized rakhte hain.
+
+## Speech pipeline fallback
+
+- **STT**: Primary Groq Whisper (`whisper-large-v3`), fallback local Whisper binary.
+- **TTS**: Primary Edge TTS (zero-cost), fallback gTTS.
 
 ## Kaise kaam karta hai
 
@@ -79,18 +107,19 @@ dega.
   (`VoiceOrb.tsx`) drive karta hai. Recording ruknay par audio blob
   `/api/voice/converse` ko bheja jata hai.
 - **Backend** (`app/Http/Controllers/VoiceAgentController.php` +
-  `app/Services/OpenAIService.php`): audio ko Whisper se transcribe karta hai,
-  poori conversation history ke sath chat model ko bhejta hai, aur reply ko
-  TTS se mp3 mein convert kar ke ek hi JSON response mein wapas bhejta hai
-  (`transcript`, `reply`, `audio_base64`).
+  `app/Services/OpenAIService.php`): audio ko provider fallback chain ke sath
+  transcribe karta hai, full conversation history ke sath next available model
+  se reply leta hai, aur result ko TTS layer se mp3 mein convert kar ke ek hi
+  JSON response mein wapas bhejta hai (`transcript`, `reply`, `audio_base64`).
 - Frontend wapas mile mp3 ko play karta hai aur playback ke waqt bhi
   `AnalyserNode` se orb ko "speaking" animation deta hai.
+- Voice responses concise rakhte hain (1–3 sentences) taaki real-time chat speed
+  maintain rahe aur latency lower ho.
 
 ## Customize karna ho to
 
 - **AI ki personality**: `VoiceAgentController::$systemPrompt` edit karen.
-- **Model/voice**: `.env` mein `OPENAI_CHAT_MODEL`, `OPENAI_TTS_VOICE` change
-  karen.
+- **Provider config**: `.env` mein `GROQ_API_KEY`, `GEMINI_API_KEY`, `OPENROUTER_API_KEY` aur model names set karen.
 - **Rang/theme**: `tailwind.config.js` ke `colors` block (`ink`, `violet`,
   `teal`, etc.) aur `resources/js/Components/VoiceOrb.tsx`.
 - Chahen to `OpenAIService` ko replace kar ke Anthropic/ElevenLabs jaisi
@@ -99,6 +128,6 @@ dega.
 
 ## Production note
 
-`OPENAI_API_KEY` hamesha server (`.env`) mein hi rakhein — frontend kabhi
-directly OpenAI ko call nahi karta, hamesha aapke Laravel backend se hota hai,
-isliye key kabhi browser mein expose nahi hoti.
+Provider keys server-side `.env` mein hi rakhein. Frontend kabhi direct API ko
+call nahi karta; sab request Laravel backend se jaati hai, isliye key browser
+me expose nahi hoti.
