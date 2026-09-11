@@ -165,11 +165,70 @@ export function useVoiceAgent() {
         }
     }, [cleanupStream, messages, playReply, stopLevelLoop]);
 
+    const sendTextMessage = useCallback(
+        async (text: string) => {
+            const trimmed = text.trim();
+            if (!trimmed) return;
+
+            setState('thinking');
+            stopLevelLoop();
+
+            try {
+                const history = messages.slice(-MAX_HISTORY_TURNS * 2);
+
+                const formData = new FormData();
+                formData.append('text', trimmed);
+                formData.append('history', JSON.stringify(history));
+
+                const csrf = document
+                    .querySelector('meta[name="csrf-token"]')
+                    ?.getAttribute('content');
+
+                const res = await fetch('/api/voice/converse', {
+                    method: 'POST',
+                    headers: csrf ? { 'X-CSRF-TOKEN': csrf } : undefined,
+                    body: formData,
+                });
+
+                const data = await res.json();
+
+                if (!res.ok) {
+                    setErrorMessage(data.error ?? 'Something went wrong.');
+                    setState('error');
+                    return;
+                }
+
+                setMessages((prev) => [
+                    ...prev,
+                    { role: 'user', content: data.transcript },
+                    { role: 'assistant', content: data.reply },
+                ]);
+
+                setState('speaking');
+                await playReply(data.audio_base64);
+                setState('idle');
+            } catch (err) {
+                setErrorMessage('Could not reach the voice agent. Is the server running?');
+                setState('error');
+            }
+        },
+        [messages, playReply, stopLevelLoop],
+    );
+
     const cancel = useCallback(() => {
         mediaRecorderRef.current?.stop();
         cleanupStream();
         setState('idle');
     }, [cleanupStream]);
 
-    return { state, level, messages, errorMessage, startListening, stopListeningAndSend, cancel };
+    return {
+        state,
+        level,
+        messages,
+        errorMessage,
+        startListening,
+        stopListeningAndSend,
+        sendTextMessage,
+        cancel,
+    };
 }

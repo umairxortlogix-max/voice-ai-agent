@@ -165,6 +165,730 @@ class OpenAIService
         return null;
     }
 
+    protected function ensureSandboxDirectories(): void
+    {
+        $workspace = base_path('agent-workspace');
+        $screenshots = storage_path('app/screenshots');
+
+        if (!is_dir($workspace)) {
+            mkdir($workspace, 0777, true);
+        }
+
+        if (!is_dir($screenshots)) {
+            mkdir($screenshots, 0777, true);
+        }
+    }
+
+    protected function resolveSandboxPath(string $filePath): string
+    {
+        $this->ensureSandboxDirectories();
+
+        $normalized = str_replace(['/', '\\'], DIRECTORY_SEPARATOR, trim((string) $filePath));
+
+        if ($normalized === '' || str_contains($normalized, '..')) {
+            throw new RuntimeException('Requested file path is outside the sandboxed agent-workspace directory.');
+        }
+
+        $base = realpath(base_path('agent-workspace'));
+        if ($base === false) {
+            throw new RuntimeException('Sandboxed agent-workspace directory does not exist.');
+        }
+
+        $candidate = rtrim($base, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . ltrim($normalized, DIRECTORY_SEPARATOR);
+        $candidate = str_replace(['/', '\\'], DIRECTORY_SEPARATOR, $candidate);
+
+        $realParent = realpath(dirname($candidate));
+        if ($realParent === false) {
+            $buildPath = dirname($candidate);
+            if (!mkdir($buildPath, 0777, true) && !is_dir($buildPath)) {
+                throw new RuntimeException('Unable to create sandbox directories for the requested file path.');
+            }
+            $realParent = realpath($buildPath);
+        }
+
+        if ($realParent === false || !str_starts_with($realParent, $base . DIRECTORY_SEPARATOR) && $realParent !== $base) {
+            throw new RuntimeException('Requested file path is outside the sandboxed agent-workspace directory.');
+        }
+
+        return $candidate;
+    }
+
+    protected function normalizeToolArguments(mixed $arguments): array
+    {
+        if (is_array($arguments)) {
+            return $arguments;
+        }
+
+        if (is_string($arguments) && trim($arguments) !== '') {
+            $decoded = json_decode($arguments, true);
+            if (is_array($decoded)) {
+                return $decoded;
+            }
+        }
+
+        return [];
+    }
+
+    public function getAvailableTools(): array
+    {
+        return [
+            [
+                'type' => 'function',
+                'function' => [
+                    'name' => 'open_application',
+                    'description' => 'Open a whitelisted desktop application on this machine.',
+                    'parameters' => [
+                        'type' => 'object',
+                        'properties' => [
+                            'app_name' => [
+                                'type' => 'string',
+                                'enum' => ['notepad', 'calculator', 'chrome', 'explorer', 'vscode'],
+                                'description' => 'The exact application name to open from the allowed list.',
+                            ],
+                        ],
+                        'required' => ['app_name'],
+                    ],
+                ],
+            ],
+            [
+                'type' => 'function',
+                'function' => [
+                    'name' => 'read_file',
+                    'description' => 'Read a file from the sandboxed agent-workspace directory only.',
+                    'parameters' => [
+                        'type' => 'object',
+                        'properties' => [
+                            'file_path' => [
+                                'type' => 'string',
+                                'description' => 'Relative file path inside the agent-workspace directory, for example notes/todo.txt',
+                            ],
+                        ],
+                        'required' => ['file_path'],
+                    ],
+                ],
+            ],
+            [
+                'type' => 'function',
+                'function' => [
+                    'name' => 'write_file',
+                    'description' => 'Write content to a file inside the sandboxed agent-workspace directory only.',
+                    'parameters' => [
+                        'type' => 'object',
+                        'properties' => [
+                            'file_path' => [
+                                'type' => 'string',
+                                'description' => 'Relative file path inside the agent-workspace directory.',
+                            ],
+                            'content' => [
+                                'type' => 'string',
+                                'description' => 'Text content to write to the file.',
+                            ],
+                        ],
+                        'required' => ['file_path', 'content'],
+                    ],
+                ],
+            ],
+            [
+                'type' => 'function',
+                'function' => [
+                    'name' => 'youtube_search_and_play',
+                    'description' => 'Open a YouTube search result page or channel in the default browser.',
+                    'parameters' => [
+                        'type' => 'object',
+                        'properties' => [
+                            'query' => [
+                                'type' => 'string',
+                                'description' => 'YouTube query, video name, or channel handle to open.',
+                            ],
+                            'mode' => [
+                                'type' => 'string',
+                                'enum' => ['search', 'channel'],
+                                'description' => 'Use search (default) to open results, or channel to open a direct channel URL.',
+                            ],
+                        ],
+                        'required' => ['query'],
+                    ],
+                ],
+            ],
+            [
+                'type' => 'function',
+                'function' => [
+                    'name' => 'open_vpn',
+                    'description' => 'Open the configured VPN client application without auto-connecting.',
+                    'parameters' => [
+                        'type' => 'object',
+                        'properties' => [
+                            'action' => [
+                                'type' => 'string',
+                                'enum' => ['open'],
+                                'description' => 'Only open is supported in this phase to avoid risky auto-connect behavior.',
+                            ],
+                        ],
+                        'required' => [],
+                    ],
+                ],
+            ],
+            [
+                'type' => 'function',
+                'function' => [
+                    'name' => 'open_browser',
+                    'description' => 'Open a supported browser with an optional profile or direct URL.',
+                    'parameters' => [
+                        'type' => 'object',
+                        'properties' => [
+                            'browser' => [
+                                'type' => 'string',
+                                'enum' => ['chrome', 'edge', 'firefox'],
+                                'description' => 'Browser to open.',
+                            ],
+                            'profiles' => [
+                                'type' => 'array',
+                                'items' => [
+                                    'type' => 'string',
+                                ],
+                                'description' => 'Optional profile names to open. If empty, the default profile is used.',
+                            ],
+                            'url' => [
+                                'type' => 'string',
+                                'description' => 'Optional direct URL to open in the browser after launch.',
+                            ],
+                        ],
+                        'required' => ['browser'],
+                    ],
+                ],
+            ],
+            [
+                'type' => 'function',
+                'function' => [
+                    'name' => 'take_screenshot',
+                    'description' => 'Capture the current desktop and save it to storage/app/screenshots.',
+                    'parameters' => [
+                        'type' => 'object',
+                        'properties' => new \stdClass(),
+                    ],
+                ],
+            ],
+            [
+                'type' => 'function',
+                'function' => [
+                    'name' => 'web_search',
+                    'description' => 'Placeholder web search tool. Returns a configured error until an external search API is wired up.',
+                    'parameters' => [
+                        'type' => 'object',
+                        'properties' => [
+                            'query' => [
+                                'type' => 'string',
+                                'description' => 'Search query to execute once the provider is configured.',
+                            ],
+                        ],
+                        'required' => ['query'],
+                    ],
+                ],
+            ],
+        ];
+    }
+
+    protected function listChromeProfiles(): array
+    {
+        $localAppData = getenv('LOCALAPPDATA');
+        if (!is_string($localAppData) || trim($localAppData) === '') {
+            return [];
+        }
+
+        $stateFile = rtrim($localAppData, DIRECTORY_SEPARATOR)
+            . DIRECTORY_SEPARATOR . 'Google'
+            . DIRECTORY_SEPARATOR . 'Chrome'
+            . DIRECTORY_SEPARATOR . 'User Data'
+            . DIRECTORY_SEPARATOR . 'Local State';
+
+        if (!is_file($stateFile)) {
+            return [];
+        }
+
+        $contents = @file_get_contents($stateFile);
+        if ($contents === false) {
+            return [];
+        }
+
+        $decoded = json_decode($contents, true);
+        if (!is_array($decoded) || !isset($decoded['profile']['info_cache'])) {
+            return [];
+        }
+
+        $profiles = [];
+        foreach ($decoded['profile']['info_cache'] as $directory => $meta) {
+            if (!is_array($meta)) {
+                continue;
+            }
+
+            $displayName = (string) ($meta['name'] ?? $meta['profile_name'] ?? $directory);
+            $profiles[(string) $directory] = $displayName;
+        }
+
+        return $profiles;
+    }
+
+    protected function sanitizeForShell(string $value): string
+    {
+        $safe = trim((string) $value);
+        $safe = str_replace(['"', "'", '&', '|', ';', '`', '<', '>'], '', $safe);
+
+        return $safe;
+    }
+
+    protected function resolveBrowserExecutable(string $browser): ?string
+    {
+        $browser = strtolower(trim($browser));
+
+        $candidates = match ($browser) {
+            'chrome' => ['chrome', 'google-chrome', 'chrome.exe'],
+            'edge' => ['msedge', 'microsoft-edge', 'msedge.exe'],
+            'firefox' => ['firefox', 'firefox.exe'],
+            default => [],
+        };
+
+        if ($candidates === []) {
+            return null;
+        }
+
+        foreach ($candidates as $candidate) {
+            $which = shell_exec(sprintf('where %s 2> NUL', $candidate));
+            if (is_string($which) && trim($which) !== '') {
+                return trim(explode(PHP_EOL, (string) $which)[0]);
+            }
+
+            $which = shell_exec(sprintf('which %s 2>/dev/null', $candidate));
+            if (is_string($which) && trim($which) !== '') {
+                return trim($which);
+            }
+        }
+
+        return $candidates[0] ?? null;
+    }
+
+    protected function openBrowserTool(string $browser, array $profiles = [], string $url = ''): array
+    {
+        $browser = strtolower(trim((string) $browser));
+        $allowed = ['chrome', 'edge', 'firefox'];
+
+        if (!in_array($browser, $allowed, true)) {
+            return ['success' => false, 'message' => sprintf('Browser "%s" is not supported. Allowed browsers: %s', $browser, implode(', ', $allowed))];
+        }
+
+        $resolvedExecutable = $this->resolveBrowserExecutable($browser);
+        if ($resolvedExecutable === null) {
+            return ['success' => false, 'message' => sprintf('Browser executable for "%s" was not found in PATH.', $browser)];
+        }
+
+        // Chrome/Edge ke liye actual available profiles nikalo taake fuzzy-match kar sakein
+        $knownProfiles = ($browser === 'chrome') ? $this->listChromeProfiles() : [];
+
+        $safeProfiles = [];
+        if (!empty($profiles)) {
+            foreach ($profiles as $profile) {
+                $clean = $this->sanitizeForShell((string) $profile);
+                if ($clean === '') {
+                    continue;
+                }
+
+                // Agar Chrome ki actual profile list available ho, to match karo
+                if ($browser === 'chrome' && $knownProfiles !== []) {
+                    $matched = $this->matchProfileName($clean, $knownProfiles);
+                    $safeProfiles[] = $matched ?? $clean;
+                } else {
+                    $safeProfiles[] = $clean;
+                }
+            }
+        }
+
+        if ($browser === 'firefox') {
+            $safeProfiles = $safeProfiles !== [] ? [$safeProfiles[0]] : ['Default'];
+        } else {
+            $safeProfiles = $safeProfiles !== [] ? $safeProfiles : ['Default'];
+        }
+
+        $safeUrl = trim((string) $url);
+        if ($safeUrl !== '') {
+            $safeUrl = 'https://' . preg_replace('/^https?:\/\//i', '', $safeUrl);
+        }
+
+        $opened = [];
+        $successfulLaunches = 0;
+
+        foreach ($safeProfiles as $profileName) {
+            $command = sprintf('cmd /c start "" "%s"', $resolvedExecutable);
+
+            if (in_array($browser, ['chrome', 'edge'], true)) {
+                $command .= sprintf(' --profile-directory="%s"', str_replace('"', '', $profileName));
+            }
+
+            if ($browser === 'firefox') {
+                $command .= sprintf(' -P "%s"', str_replace('"', '', $profileName));
+            }
+
+            if ($safeUrl !== '') {
+                $command .= sprintf(' "%s"', $safeUrl);
+            }
+
+            try {
+                exec($command . ' 2>NUL', $output, $exitCode);
+                $opened[] = [
+                    'browser' => $browser,
+                    'profile' => $profileName,
+                    'url' => $safeUrl !== '' ? $safeUrl : null,
+                    'exitCode' => $exitCode,
+                ];
+
+                if ($exitCode === 0) {
+                    $successfulLaunches++;
+                }
+            } catch (Throwable $e) {
+                $opened[] = [
+                    'browser' => $browser,
+                    'profile' => $profileName,
+                    'url' => $safeUrl !== '' ? $safeUrl : null,
+                    'error' => $e->getMessage(),
+                ];
+            }
+        }
+
+        $result = [
+            'success' => $successfulLaunches > 0,
+            'message' => sprintf('Opened %s browser profile(s).', $browser),
+            'opened' => $opened,
+        ];
+
+        Log::info('[TOOL_CALL]', ['tool' => 'open_browser', 'args' => ['browser' => $browser, 'profiles' => $profiles, 'url' => $url], 'result' => $result]);
+
+        return $result;
+    }
+    protected function matchProfileName(string $requested, array $knownProfiles): ?string
+    {
+        $normalize = fn(string $s) => strtolower(str_replace(' ', '', $s));
+        $requestedNormalized = $normalize($requested);
+
+        foreach (array_keys($knownProfiles) as $directory) {
+            if ($normalize($directory) === $requestedNormalized) {
+                return $directory; // asal directory name return karo, e.g. "Profile 1"
+            }
+        }
+
+        // Display name se bhi match try karo (e.g. user "Work" bole, meta name "Work" ho)
+        foreach ($knownProfiles as $directory => $displayName) {
+            if ($normalize($displayName) === $requestedNormalized) {
+                return $directory;
+            }
+        }
+
+        return null; // koi match nahi mila, original value use hoga
+    }
+    protected function openApplicationTool(string $appName): array
+    {
+        $allowed = ['notepad', 'calculator', 'chrome', 'explorer', 'vscode'];
+        $normalized = strtolower(trim((string) $appName));
+
+        if (!in_array($normalized, $allowed, true)) {
+            return [
+                'success' => false,
+                'message' => sprintf('Application "%s" is not allowed. Allowed apps: %s', $appName, implode(', ', $allowed)),
+            ];
+        }
+
+        $commands = [
+            'notepad' => 'notepad',
+            'calculator' => 'calc',
+            'chrome' => 'chrome',
+            'explorer' => 'explorer',
+            'vscode' => 'code',
+        ];
+
+        $command = $commands[$normalized];
+
+        try {
+            if (strtoupper(substr(PHP_OS, 0, 3)) === 'WIN') {
+                $launch = sprintf('cmd /c start "" "%s"', $command);
+            } else {
+                $launch = sprintf('nohup %s >/dev/null 2>&1 &', escapeshellarg($command));
+            }
+
+            exec($launch . ' 2>NUL', $output, $exitCode);
+
+            if ($exitCode !== 0 && !in_array($normalized, ['explorer', 'notepad'], true)) {
+                return [
+                    'success' => false,
+                    'message' => sprintf('Unable to launch %s from this environment.', $normalized),
+                ];
+            }
+
+            return [
+                'success' => true,
+                'message' => sprintf('Opened %s successfully.', $normalized),
+            ];
+        } catch (Throwable $e) {
+            return [
+                'success' => false,
+                'message' => sprintf('Unable to launch %s: %s', $normalized, $e->getMessage()),
+            ];
+        }
+    }
+
+    protected function readFileTool(string $filePath): array
+    {
+        try {
+            $resolved = $this->resolveSandboxPath($filePath);
+            if (!is_file($resolved)) {
+                return ['success' => false, 'message' => sprintf('File not found in sandbox: %s', $filePath)];
+            }
+
+            $content = file_get_contents($resolved);
+            if ($content === false) {
+                return ['success' => false, 'message' => sprintf('Unable to read file: %s', $filePath)];
+            }
+
+            return [
+                'success' => true,
+                'path' => $resolved,
+                'content' => $content,
+            ];
+        } catch (RuntimeException $e) {
+            return ['success' => false, 'message' => $e->getMessage()];
+        }
+    }
+
+    protected function writeFileTool(string $filePath, string $content): array
+    {
+        try {
+            $resolved = $this->resolveSandboxPath($filePath);
+            $directory = dirname($resolved);
+            if (!is_dir($directory) && !mkdir($directory, 0777, true) && !is_dir($directory)) {
+                return ['success' => false, 'message' => sprintf('Unable to create directory for %s', $filePath)];
+            }
+
+            $written = file_put_contents($resolved, $content);
+            if ($written === false) {
+                return ['success' => false, 'message' => sprintf('Unable to write file: %s', $filePath)];
+            }
+
+            return [
+                'success' => true,
+                'path' => $resolved,
+                'message' => sprintf('Wrote %s bytes to %s', $written, $filePath),
+            ];
+        } catch (RuntimeException $e) {
+            return ['success' => false, 'message' => $e->getMessage()];
+        }
+    }
+
+    protected function takeScreenshotTool(): array
+    {
+        $this->ensureSandboxDirectories();
+        $directory = storage_path('app/screenshots');
+
+        try {
+            $fileName = 'screenshot-' . date('Ymd-His') . '-' . uniqid() . '.png';
+            $fullPath = $directory . DIRECTORY_SEPARATOR . $fileName;
+            $script = sprintf(
+                '$folder = %s; New-Item -ItemType Directory -Force -Path $folder | Out-Null; $file = Join-Path $folder %s; Add-Type -AssemblyName System.Windows.Forms; Add-Type -AssemblyName System.Drawing; $bounds = [System.Windows.Forms.SystemInformation]::VirtualScreen; $bitmap = New-Object System.Drawing.Bitmap $bounds.Width, $bounds.Height; $graphics = [System.Drawing.Graphics]::FromImage($bitmap); $graphics.CopyFromScreen($bounds.Location, [System.Drawing.Point]::Empty, $bounds.Size); $bitmap.Save($file, [System.Drawing.Imaging.ImageFormat]::Png); $graphics.Dispose(); $bitmap.Dispose(); Write-Output $file;',
+                var_export($directory, true),
+                var_export($fileName, true)
+            );
+
+            $command = sprintf('powershell -NoProfile -ExecutionPolicy Bypass -Command %s', escapeshellarg($script));
+            $output = shell_exec($command);
+            if (!is_string($output) || trim($output) === '') {
+                return ['success' => false, 'message' => 'Screenshot capture failed.'];
+            }
+
+            $outputPath = trim($output);
+            if (!is_file($outputPath)) {
+                return ['success' => false, 'message' => 'Screenshot file was not created.'];
+            }
+
+            return ['success' => true, 'path' => $outputPath, 'message' => 'Screenshot captured successfully.'];
+        } catch (Throwable $e) {
+            return ['success' => false, 'message' => 'Screenshot capture failed: ' . $e->getMessage()];
+        }
+    }
+
+    protected function webSearchTool(string $query): array
+    {
+        return [
+            'success' => false,
+            'message' => 'Web search is not configured yet. Add an API key or provider and enable the search tool.',
+        ];
+    }
+
+    protected function resolveYouTubeVideoUrl(string $query): ?string
+    {
+        $normalizedQuery = trim((string) $query);
+        if ($normalizedQuery === '') {
+            return null;
+        }
+
+        $directPattern = '/^(https?:\/\/)?(www\.)?(youtube\.com\/(watch\?v=|shorts\/|live\/)|youtu\.be\/)/i';
+        if (preg_match($directPattern, $normalizedQuery) === 1) {
+            return $normalizedQuery;
+        }
+
+        $searchUrl = 'https://www.youtube.com/results?search_query=' . rawurlencode($normalizedQuery);
+
+        try {
+            $response = $this->http->request('GET', $searchUrl, [
+                'headers' => [
+                    'User-Agent' => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36',
+                    'Accept-Language' => 'en-US,en;q=0.9',
+                ],
+                'http_errors' => false,
+                'timeout' => 15,
+            ]);
+
+            $html = (string) $response->getBody();
+            if ($html === '') {
+                return null;
+            }
+
+            $patterns = [
+                '/(?:"|\')videoId(?:"|\')\s*:\s*(?:"|\')([A-Za-z0-9_-]{11})(?:"|\')/i',
+                '/(?:v=|\/watch\?v=|\/shorts\/|\/live\/)([A-Za-z0-9_-]{11})/i',
+                '/(?:data-video-id|video_id)(?:=|\":\s*\")([A-Za-z0-9_-]{11})/i',
+            ];
+
+            foreach ($patterns as $pattern) {
+                if (preg_match($pattern, $html, $matches) === 1) {
+                    $videoId = $matches[1] ?? null;
+                    if (is_string($videoId) && preg_match('/^[A-Za-z0-9_-]{11}$/', $videoId) === 1) {
+                        return 'https://www.youtube.com/watch?v=' . $videoId;
+                    }
+                }
+            }
+        } catch (Throwable $e) {
+            Log::warning('[YOUTUBE_VIDEO_RESOLVE_FAILED]', ['query' => $normalizedQuery, 'error' => $e->getMessage()]);
+        }
+
+        return null;
+    }
+
+    protected function toolYoutubeSearchAndPlay(string $query, string $mode = 'search'): array
+    {
+        $normalizedQuery = trim((string) $query);
+        $normalizedMode = strtolower(trim((string) $mode));
+        if ($normalizedMode === '') {
+            $normalizedMode = 'search';
+        }
+
+        if (!in_array($normalizedMode, ['search', 'channel', 'play'], true)) {
+            $normalizedMode = 'search';
+        }
+
+        if ($normalizedQuery === '') {
+            $result = ['success' => false, 'message' => 'YouTube query is required.'];
+            Log::info('[TOOL_CALL]', ['tool' => 'youtube_search_and_play', 'args' => ['query' => $query, 'mode' => $mode], 'result' => $result]);
+
+            return $result;
+        }
+
+        try {
+            $isDirectYouTubeUrl = preg_match('/^(https?:\/\/)?(www\.)?(youtube\.com\/(watch\?v=|shorts\/|live\/)|youtu\.be\/)/i', $normalizedQuery) === 1;
+
+            if ($normalizedMode === 'channel') {
+                $channelHandle = ltrim($normalizedQuery, '@');
+                $channelHandle = trim($channelHandle);
+
+                if ($channelHandle !== '' && !str_contains($channelHandle, ' ') && !str_contains(strtolower($channelHandle), 'youtube.com')) {
+                    $url = 'https://www.youtube.com/@' . $channelHandle;
+                } else {
+                    $url = $isDirectYouTubeUrl ? $normalizedQuery : 'https://www.youtube.com/results?search_query=' . urlencode($normalizedQuery);
+                }
+            } else {
+                $resolvedVideoUrl = $this->resolveYouTubeVideoUrl($normalizedQuery);
+                if ($resolvedVideoUrl !== null && $normalizedMode !== 'search') {
+                    $url = $resolvedVideoUrl;
+                } elseif ($resolvedVideoUrl !== null) {
+                    $url = $resolvedVideoUrl;
+                } elseif ($isDirectYouTubeUrl) {
+                    $url = $normalizedQuery;
+                } else {
+                    $url = 'https://www.youtube.com/results?search_query=' . urlencode($normalizedQuery);
+                }
+            }
+
+            $command = sprintf('start "" "%s"', str_replace('"', '""', $url));
+            $handle = @popen($command, 'r');
+            if (is_resource($handle)) {
+                fclose($handle);
+            }
+
+            $result = [
+                'success' => true,
+                'message' => sprintf('Opened YouTube for: %s', $normalizedQuery),
+                'url' => $url,
+            ];
+        } catch (Throwable $e) {
+            $result = ['success' => false, 'message' => 'Unable to open YouTube: ' . $e->getMessage()];
+        }
+
+        Log::info('[TOOL_CALL]', ['tool' => 'youtube_search_and_play', 'args' => ['query' => $query, 'mode' => $mode], 'result' => $result]);
+
+        return $result;
+    }
+
+    protected function toolOpenVpn(): array
+    {
+        $vpnPath = trim((string) config('services.vpn.executable_path'));
+
+        if ($vpnPath === '') {
+            $result = ['success' => false, 'message' => 'VPN client path not configured. Set VPN_EXECUTABLE_PATH in .env'];
+            Log::info('[TOOL_CALL]', ['tool' => 'open_vpn', 'args' => [], 'result' => $result]);
+
+            return $result;
+        }
+
+        try {
+            $command = sprintf('start "" "%s"', str_replace('"', '""', $vpnPath));
+            $handle = @popen($command, 'r');
+            if (is_resource($handle)) {
+                fclose($handle);
+            }
+
+            $result = ['success' => true, 'message' => 'Opened VPN client.'];
+        } catch (Throwable $e) {
+            $result = ['success' => false, 'message' => 'Unable to open VPN client: ' . $e->getMessage()];
+        }
+
+        Log::info('[TOOL_CALL]', ['tool' => 'open_vpn', 'args' => [], 'result' => $result]);
+
+        return $result;
+    }
+
+    public function executeTool(string $toolName, array $args = []): string
+    {
+        $toolName = trim((string) $toolName);
+        $arguments = is_array($args) ? $args : [];
+
+        $result = match ($toolName) {
+            'open_application' => $this->openApplicationTool((string) ($arguments['app_name'] ?? '')),
+            'read_file' => $this->readFileTool((string) ($arguments['file_path'] ?? '')),
+            'write_file' => $this->writeFileTool((string) ($arguments['file_path'] ?? ''), (string) ($arguments['content'] ?? '')),
+            'youtube_search_and_play' => $this->toolYoutubeSearchAndPlay((string) ($arguments['query'] ?? ''), (string) ($arguments['mode'] ?? 'search')),
+            'open_vpn' => $this->toolOpenVpn(),
+            'open_browser' => $this->openBrowserTool((string) ($arguments['browser'] ?? ''), (array) ($arguments['profiles'] ?? []), (string) ($arguments['url'] ?? '')),
+            'take_screenshot' => $this->takeScreenshotTool(),
+            'web_search' => $this->webSearchTool((string) ($arguments['query'] ?? '')),
+            default => [
+                'success' => false,
+                'message' => sprintf('Tool "%s" is not supported.', $toolName),
+            ],
+        };
+
+        Log::info('[TOOL_CALL]', [
+            'tool' => $toolName,
+            'args' => $arguments,
+            'result' => $result,
+        ]);
+
+        return json_encode($result, JSON_THROW_ON_ERROR);
+    }
+
     protected function chatWithProvider(string $provider, array $messages): string
     {
         if ($provider === 'groq') {
@@ -173,22 +897,48 @@ class OpenAIService
             }
 
             $model = config('services.groq.chat_model', 'openai/gpt-oss-20b');
+            $maxIterations = 5;
 
-            $response = $this->http->post('https://api.groq.com/openai/v1/chat/completions', [
-                'headers' => [
-                    'Authorization' => 'Bearer ' . config('services.groq.key'),
-                    'Content-Type' => 'application/json',
-                ],
-                'json' => [
-                    'model' => $model,
-                    'messages' => $messages,
-                    'temperature' => 0.7,
-                ],
-            ]);
+            for ($iteration = 0; $iteration < $maxIterations; $iteration++) {
+                $response = $this->http->post('https://api.groq.com/openai/v1/chat/completions', [
+                    'headers' => [
+                        'Authorization' => 'Bearer ' . config('services.groq.key'),
+                        'Content-Type' => 'application/json',
+                    ],
+                    'json' => [
+                        'model' => $model,
+                        'messages' => $messages,
+                        'temperature' => 0.7,
+                        'tools' => $this->getAvailableTools(),
+                    ],
+                ]);
 
-            $data = json_decode((string) $response->getBody(), true);
+                $data = json_decode((string) $response->getBody(), true);
+                $assistantMessage = $data['choices'][0]['message'] ?? [];
+                $toolCalls = $assistantMessage['tool_calls'] ?? [];
 
-            return $data['choices'][0]['message']['content'] ?? '';
+                if (empty($toolCalls)) {
+                    return $assistantMessage['content'] ?? '';
+                }
+
+                $messages[] = $assistantMessage;
+
+                foreach ($toolCalls as $toolCall) {
+                    $function = $toolCall['function'] ?? [];
+                    $toolName = $function['name'] ?? '';
+                    $toolArgs = $this->normalizeToolArguments($function['arguments'] ?? '{}');
+                    $toolResult = $this->executeTool($toolName, $toolArgs);
+
+                    $messages[] = [
+                        'role' => 'tool',
+                        'tool_call_id' => $toolCall['id'] ?? uniqid('toolcall-', true),
+                        'name' => $toolName,
+                        'content' => $toolResult,
+                    ];
+                }
+            }
+
+            return 'The agent is still working through the requested action. Please try again in a moment.';
         }
 
         if ($provider === 'gemini') {

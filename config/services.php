@@ -58,4 +58,8 @@ return [
         'chat_model' => env('OPENROUTER_MODEL', 'openai/gpt-oss-20b:free'),
     ],
 
+    'vpn' => [
+        'executable_path' => env('VPN_EXECUTABLE_PATH'),
+    ],
+
 ];

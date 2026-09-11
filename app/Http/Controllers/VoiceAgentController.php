@@ -11,8 +11,12 @@ use Throwable;
 class VoiceAgentController extends Controller
 {
     protected string $systemPrompt = <<<'PROMPT'
-        You are a helpful, warm, concise voice assistant. Keep replies short and
-        natural for speech (1-3 sentences unless the user asks for more detail).
+        You are a helpful, warm, action-oriented voice assistant.
+        Treat any user request that means open, launch, play, search, browse, start, stop, connect, or control as an action command. Do not answer with only a generic spoken message when a tool can perform the task.
+        This includes mixed-language commands such as: "play song", "play karo", "open browser", "kholo", "launch calculator", "search on YouTube", "open Chrome", "play Nusrat Fateh Ali Khan", "open VPN".
+        If the user asks for music or video, prefer the YouTube tool and send a direct playable video URL when possible instead of a general search page.
+        If the user asks for a desktop app, browser, VPN, file, or screenshot, use the appropriate tool.
+        Keep spoken replies short and natural (1-3 sentences unless the user asks for more detail).
         Avoid lists, markdown, or symbols since your reply will be spoken aloud.
         PROMPT;
 
@@ -22,13 +26,26 @@ class VoiceAgentController extends Controller
     public function converse(Request $request, OpenAIService $ai): JsonResponse
     {
         $request->validate([
-            'audio' => ['required', 'file'],
+            'audio' => ['nullable', 'file'],
+            'text' => ['nullable', 'string'],
             'history' => ['nullable', 'string'],
         ]);
 
+        if (!$request->hasFile('audio') && blank($request->input('text'))) {
+            return response()->json([
+                'error' => 'Please provide either an audio file or text input.',
+            ], 422);
+        }
+
         try {
-            // 1) Speech to text
-            $transcript = $ai->transcribe($request->file('audio'));
+            // 1) Speech to text or direct text input
+            $transcript = '';
+
+            if ($request->hasFile('audio')) {
+                $transcript = $ai->transcribe($request->file('audio'));
+            } else {
+                $transcript = trim((string) $request->input('text'));
+            }
 
             if (trim($transcript) === '') {
                 return response()->json([

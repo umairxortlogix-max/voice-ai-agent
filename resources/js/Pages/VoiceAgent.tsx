@@ -8,24 +8,35 @@ import {
     Home,
     MessageSquareText,
     Mic,
+    Send,
     Settings,
     ShieldCheck,
     Sparkles,
     Square,
     Zap,
 } from 'lucide-react';
+import { useState } from 'react';
 import VoiceOrb from '../Components/VoiceOrb';
 import TranscriptPanel from '../Components/TranscriptPanel';
 import { useVoiceAgent } from '../hooks/useVoiceAgent';
 
 export default function VoiceAgent() {
-    const { state, level, messages, errorMessage, startListening, stopListeningAndSend, cancel } =
+    const { state, level, messages, errorMessage, startListening, stopListeningAndSend, sendTextMessage, cancel } =
         useVoiceAgent();
+    const [draftText, setDraftText] = useState('');
 
     const handleMicClick = () => {
         if (state === 'idle' || state === 'error') startListening();
         else if (state === 'listening') stopListeningAndSend();
         else cancel();
+    };
+
+    const handleTextSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
+        event.preventDefault();
+        if (!draftText.trim()) return;
+
+        await sendTextMessage(draftText);
+        setDraftText('');
     };
 
     const busy = state === 'thinking' || state === 'speaking';
@@ -180,6 +191,25 @@ export default function VoiceAgent() {
                                 {state === 'listening' ? 'Tap to stop and send' : 'Tap to talk'}
                             </p>
                         </div>
+
+                        <form onSubmit={handleTextSubmit} className="flex w-full max-w-xl items-center gap-3 rounded-2xl border border-cyan-400/20 bg-slate-900/40 px-3 py-2 backdrop-blur-sm">
+                            <input
+                                type="text"
+                                value={draftText}
+                                onChange={(event) => setDraftText(event.target.value)}
+                                placeholder="Type your message here..."
+                                className="w-full bg-transparent px-2 py-2 text-sm text-cyan-50 placeholder:text-cyan-100/40 focus:outline-none"
+                                disabled={busy}
+                            />
+                            <button
+                                type="submit"
+                                disabled={busy || !draftText.trim()}
+                                className="flex h-10 w-10 items-center justify-center rounded-xl border border-cyan-400/30 bg-cyan-500/10 text-cyan-100 transition hover:bg-cyan-500/20 disabled:cursor-not-allowed disabled:opacity-40"
+                                aria-label="Send text message"
+                            >
+                                <Send size={16} />
+                            </button>
+                        </form>
 
                         {errorMessage && (
                             <div className="flex items-center gap-2 rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-2 text-sm text-red-300 shadow-[0_0_20px_rgba(239,68,68,0.25)]">
