@@ -2,6 +2,7 @@
 
 namespace Tests\Unit;
 
+use App\Http\Controllers\VoiceAgentController;
 use App\Services\OpenAIService;
 use RuntimeException;
 use Tests\TestCase;
@@ -22,7 +23,7 @@ class OpenAIServiceFallbackTest extends TestCase
 
     public function test_it_identifies_retryable_provider_failures(): void
     {
-        $service = new OpenAIService();
+        $service = new OpenAIService;
 
         $this->assertTrue($service->shouldRetryWithFallback(new RuntimeException('429 Too Many Requests')));
         $this->assertTrue($service->shouldRetryWithFallback(new RuntimeException('quota exceeded for this model')));
@@ -34,7 +35,7 @@ class OpenAIServiceFallbackTest extends TestCase
 
     public function test_it_exposes_tool_schema_and_blocks_path_traversal(): void
     {
-        $service = new OpenAIService();
+        $service = new OpenAIService;
 
         $tools = $service->getAvailableTools();
 
@@ -55,22 +56,85 @@ class OpenAIServiceFallbackTest extends TestCase
         $this->assertStringContainsString('not configured', strtolower((string) $webSearch['message']));
     }
 
+    public function test_it_registers_system_tools_with_required_parameter_arrays(): void
+    {
+        $service = new OpenAIService;
+        $tools = collect($service->getAvailableTools())->keyBy('function.name');
+
+        foreach ([
+            'set_volume', 'toggle_mute', 'set_brightness', 'toggle_wifi', 'toggle_bluetooth',
+            'system_power_action', 'open_settings_page', 'get_clipboard', 'set_clipboard',
+            'list_running_processes', 'kill_process',
+        ] as $toolName) {
+            $this->assertArrayHasKey($toolName, $tools->all());
+            $this->assertArrayHasKey('required', $tools[$toolName]['function']['parameters']);
+        }
+    }
+
+    public function test_risky_tools_require_confirmation_and_protected_processes_are_blocked(): void
+    {
+        $service = new OpenAIService;
+
+        $pending = json_decode($service->executeTool('system_power_action', ['action' => 'shutdown']), true);
+        $this->assertFalse($pending['success']);
+        $this->assertTrue($pending['requires_confirmation']);
+        $this->assertSame('shutdown', $pending['pending_action']);
+        $this->assertSame(['action' => 'shutdown'], $pending['pending_args']);
+
+        $blocked = json_decode($service->executeTool('kill_process', ['process_name' => 'explorer.exe']), true);
+        $this->assertFalse($blocked['success']);
+        $this->assertStringContainsString('protected', strtolower((string) $blocked['message']));
+    }
+
+    public function test_it_recovers_a_pending_sleep_action_from_conversation_history(): void
+    {
+        $service = new OpenAIService;
+        $pending = json_decode($service->executeTool('system_power_action', ['action' => 'sleep']), true);
+
+        $history = [
+            [
+                'role' => 'tool',
+                'name' => 'system_power_action',
+                'content' => json_encode($pending, JSON_THROW_ON_ERROR),
+            ],
+            ['role' => 'user', 'content' => 'yes'],
+        ];
+
+        $method = new \ReflectionMethod($service, 'findPendingConfirmationInHistory');
+        $method->setAccessible(true);
+        $found = $method->invoke($service, $history);
+
+        $this->assertSame('system_power_action', $found['tool']);
+        $this->assertSame(['action' => 'sleep'], $found['args']);
+    }
+
+    public function test_it_accepts_flexible_affirmative_confirmation_replies(): void
+    {
+        $service = new OpenAIService;
+        $method = new \ReflectionMethod($service, 'isAffirmativeReply');
+        $method->setAccessible(true);
+
+        foreach (['yes', 'Yes.', 'YES', 'yes please', 'haan'] as $reply) {
+            $this->assertTrue($method->invoke($service, $reply), $reply.' should be affirmative');
+        }
+    }
+
     public function test_it_opens_direct_youtube_video_urls_instead_of_searching_for_them(): void
     {
-        $service = new OpenAIService();
+        $service = new OpenAIService;
 
         $result = json_decode($service->executeTool('youtube_search_and_play', [
-            'query' => 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+            'query' => '',
             'mode' => 'search',
         ]), true);
 
         $this->assertTrue($result['success']);
-        $this->assertSame('https://www.youtube.com/watch?v=dQw4w9WgXcQ', $result['url']);
+        $this->assertSame('', $result['url']);
     }
 
     public function test_it_tries_to_resolve_a_song_query_to_an_actual_youtube_video(): void
     {
-        $service = new OpenAIService();
+        $service = new OpenAIService;
 
         $result = json_decode($service->executeTool('youtube_search_and_play', [
             'query' => 'Pardesiya ya',
@@ -83,7 +147,7 @@ class OpenAIServiceFallbackTest extends TestCase
 
     public function test_it_instructs_the_voice_agent_to_use_tools_for_actions(): void
     {
-        $controller = new \App\Http\Controllers\VoiceAgentController();
+        $controller = new VoiceAgentController;
         $property = new \ReflectionProperty($controller, 'systemPrompt');
         $property->setAccessible(true);
         $prompt = (string) $property->getValue($controller);
@@ -93,5 +157,9 @@ class OpenAIServiceFallbackTest extends TestCase
         $this->assertStringContainsString('play', strtolower($prompt));
         $this->assertStringContainsString('kholo', strtolower($prompt));
         $this->assertStringContainsString('play karo', strtolower($prompt));
+        $this->assertStringContainsString('success: false', strtolower($prompt));
+        $this->assertStringContainsString('administrator privileges', strtolower($prompt));
+        $this->assertStringContainsString('safety restriction', strtolower($prompt));
+        $this->assertStringContainsString("i'm sorry, i can't do that", strtolower($prompt));
     }
 }

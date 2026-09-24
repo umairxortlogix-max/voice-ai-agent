@@ -129,7 +129,7 @@ export default function VoiceAgent() {
                     </div>
                 </header>
 
-                <div className="relative z-20 flex w-full max-w-7xl flex-1 flex-col gap-7 lg:flex-row lg:items-stretch lg:gap-8">
+                <div className="relative z-20 flex w-full max-w-7xl flex-1 flex-col gap-7 lg:h-[calc(100dvh-7rem)] lg:min-h-0 lg:flex-row lg:items-stretch lg:gap-8">
                     <aside className="relative hidden w-[250px] lg:block">
                         <div className="floating-panel metrics-card metrics-top">
                             <div className="panel-header">
@@ -219,9 +219,9 @@ export default function VoiceAgent() {
                         )}
                     </main>
 
-                    <aside className="w-full lg:max-w-[360px]">
-                        <div className="flex h-full min-h-[320px] flex-col gap-4">
-                            <div className="flex h-full min-h-[320px] flex-col rounded-[2rem] border border-cyan-400/20 bg-slate-950/25 p-4 shadow-[0_0_30px_rgba(34,211,238,0.08)] backdrop-blur-xl">
+                    <aside className="w-full lg:min-h-0 lg:max-w-[360px]">
+                        <div className="flex h-full min-h-0 flex-col gap-4">
+                            <div className="chat-panel flex min-h-[320px] flex-1 flex-col overflow-hidden rounded-[2rem] border border-cyan-400/20 bg-slate-950/25 p-4 shadow-[0_0_30px_rgba(34,211,238,0.08)] backdrop-blur-xl lg:min-h-0">
                                 <div className="mb-3 flex items-center justify-between border-b border-cyan-400/15 pb-3">
                                     <div className="flex items-center gap-2">
                                         <div className="rounded-md border border-cyan-400/20 bg-cyan-400/5 p-1.5 text-cyan-100/80">
@@ -235,7 +235,7 @@ export default function VoiceAgent() {
                                         {messages.length} turns
                                     </span>
                                 </div>
-                                <div className="min-h-0 flex-1 overflow-y-auto pr-2">
+                                <div className="chat-history-scroll min-h-0 flex-1 overflow-y-auto pr-2">
                                     {messages.length === 0 ? (
                                         <div className="flex h-full min-h-[220px] flex-col items-center justify-center gap-3 p-4 text-center">
                                             <div className="flex h-12 w-12 items-center justify-center rounded-full border border-cyan-400/20 bg-cyan-400/5 text-cyan-100/80">

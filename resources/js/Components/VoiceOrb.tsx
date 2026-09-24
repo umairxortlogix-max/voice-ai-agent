@@ -27,10 +27,12 @@ export default function VoiceOrb({ state, level }: Props) {
             {[0, 1, 2, 3].map((i) => (
                 <motion.span
                     key={i}
-                    className="absolute rounded-full border border-cyan-300/25"
+                    className={`absolute rounded-full border border-cyan-300/25 ${isListening ? 'orb-listening-ring' : ''}`}
                     style={{ inset: 0 }}
                     animate={
-                        active
+                        isListening
+                            ? { scale: [1, 1.18 + i * 0.08, 1.42 + i * 0.1], opacity: [0.34, 0.2, 0] }
+                            : active
                             ? {
                                   scale: 1 + level * (0.4 + i * 0.18),
                                   opacity: 0.32 - i * 0.08,
@@ -40,7 +42,9 @@ export default function VoiceOrb({ state, level }: Props) {
                               : { scale: 1, opacity: 0.12 }
                     }
                     transition={
-                        isThinking
+                        isListening
+                            ? { duration: 2.4, repeat: Infinity, delay: i * 0.32, ease: 'easeOut' }
+                            : isThinking
                             ? { duration: 1.6, repeat: Infinity, delay: i * 0.15, ease: 'easeInOut' }
                             : { type: 'spring', stiffness: 120, damping: 14 }
                     }
@@ -90,12 +94,24 @@ export default function VoiceOrb({ state, level }: Props) {
                         'radial-gradient(circle at 35% 30%, rgba(201,216,255,1) 0%, rgba(134,126,255,0.96) 28%, rgba(94,92,255,0.9) 50%, rgba(11,16,34,0.95) 100%)',
                 }}
                 animate={{
-                    scale: coreScale,
-                    boxShadow: active
-                        ? '0 0 60px rgba(34, 211, 238, 0.45)'
-                        : '0 0 48px rgba(124, 111, 255, 0.38)',
+                                        scale: state === 'idle' ? [1, 1.05, 1] : coreScale,
+                                        boxShadow: isSpeaking
+                                                ? [
+                                                            '0 0 48px rgba(34, 211, 238, 0.38)',
+                                                            '0 0 72px rgba(34, 211, 238, 0.62)',
+                                                            '0 0 48px rgba(34, 211, 238, 0.38)',
+                                                    ]
+                                                : active
+                                                    ? '0 0 60px rgba(34, 211, 238, 0.45)'
+                                                    : '0 0 48px rgba(124, 111, 255, 0.38)',
                 }}
-                transition={{ type: 'spring', stiffness: 170, damping: 16 }}
+                                transition={
+                                        state === 'idle'
+                                                ? { duration: 2.6, repeat: Infinity, ease: 'easeInOut' }
+                                                : isSpeaking
+                                                    ? { duration: 0.9, repeat: Infinity, ease: 'easeInOut' }
+                                                    : { type: 'spring', stiffness: 170, damping: 16 }
+                                }
             >
                 <motion.div
                     className="absolute inset-[9%] rounded-full"

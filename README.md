@@ -131,3 +131,42 @@ System ke andar fallback logic is tarah kaam karta hai:
 Provider keys server-side `.env` mein hi rakhein. Frontend kabhi direct API ko
 call nahi karta; sab request Laravel backend se jaati hai, isliye key browser
 me expose nahi hoti.
+
+## Windows system-control tools
+
+AIVA ke Windows tools `app/Services/OpenAIService.php` mein allowlisted hain:
+
+- Audio: `set_volume`, `toggle_mute`
+- Display and connectivity: `set_brightness`, `toggle_wifi`, `toggle_bluetooth`
+- System: `system_power_action`, `open_settings_page`
+- Clipboard: `get_clipboard`, `set_clipboard`
+- Processes: `list_running_processes`, `kill_process`
+
+`set_brightness` laptop displays par WMI ke zariye kaam karta hai. External
+monitors WMI brightness control support na bhi kar sakte hain, isliye un par
+yeh tool fail ho sakta hai.
+
+Wi-Fi aur Bluetooth adapters ko enable/disable karne ke liye administrator
+privileges zaroori ho sakti hain. Laragon par right-click karein, **Run as
+administrator** select karein, phir PHP/Laravel server restart karein. Failure
+par AIVA yeh message return karta hai: `Requires administrator privileges. Run
+Laragon/PHP as Administrator.`
+
+Shutdown aur restart hamesha 60-second delay ke saath schedule hote hain. Inhe
+cancel karne ke liye Windows Command Prompt mein `shutdown /a` chalayein.
+
+### Confirmation flow
+
+`system_power_action` aur `kill_process` pehle request par actual action nahi
+karte. Pending action Laravel cache mein 60 seconds ke liye store hoti hai aur
+AIVA confirmation maangti hai. Agle message mein `YES`, `haan`, ya `confirm`
+hone par hi action execute hota hai.
+
+Example commands:
+
+- `volume 50 kar do` -> volume 50 percent set.
+- `brightness 70 kar do` -> laptop brightness 70 percent set.
+- `Wi-Fi band kar do` -> administrator permission required ho sakti hai.
+- `PC shutdown kar do` -> confirmation maangega; `YES` ke baad 60-second shutdown schedule hoga.
+- `Chrome process band karo` -> confirmation maangega.
+- `explorer.exe band karo` -> hard-block hoga. `explorer.exe`, `csrss.exe`, `winlogon.exe`, `services.exe`, `System`, aur `svchost.exe` kabhi terminate nahi kiye ja sakte.

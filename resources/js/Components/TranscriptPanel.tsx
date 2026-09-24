@@ -1,4 +1,5 @@
 import { AnimatePresence, motion } from 'framer-motion';
+import { useEffect, useRef } from 'react';
 import type { ChatMessage } from '../hooks/useVoiceAgent';
 
 type Props = {
@@ -6,6 +7,12 @@ type Props = {
 };
 
 export default function TranscriptPanel({ messages }: Props) {
+    const endRef = useRef<HTMLDivElement>(null);
+
+    useEffect(() => {
+        endRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
+    }, [messages.length]);
+
     if (messages.length === 0) {
         return (
             <div className="flex h-full min-h-[220px] items-center justify-center p-4">
@@ -39,6 +46,7 @@ export default function TranscriptPanel({ messages }: Props) {
                     </motion.div>
                 ))}
             </AnimatePresence>
+            <div ref={endRef} aria-hidden="true" />
         </div>
     );
 }

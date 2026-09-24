@@ -44,7 +44,7 @@ return [
 
     'groq' => [
         'key' => env('GROQ_API_KEY'),
-        'chat_model' => env('GROQ_MODEL', env('GROQ_MODEL_FALLBACK', 'openai/gpt-oss-20b')),
+        'chat_model' => env('GROQ_CHAT_MODEL', env('GROQ_MODEL', 'openai/gpt-oss-20b')),
         'stt_model' => env('GROQ_STT_MODEL', 'whisper-large-v3'),
     ],
 
@@ -55,7 +55,7 @@ return [
 
     'openrouter' => [
         'key' => env('OPENROUTER_API_KEY'),
-        'chat_model' => env('OPENROUTER_MODEL', 'openai/gpt-oss-20b:free'),
+        'chat_model' => env('OPENROUTER_CHAT_MODEL', env('OPENROUTER_MODEL', 'openai/gpt-oss-20b:free')),
     ],
 
     'vpn' => [

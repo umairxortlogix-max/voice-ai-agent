@@ -7,12 +7,20 @@ export type ChatMessage = {
     content: string;
 };
 
+type HistoryMessage = ChatMessage | {
+    role: 'tool';
+    tool_call_id: string;
+    name: string;
+    content: string;
+};
+
 const MAX_HISTORY_TURNS = 12;
 
 export function useVoiceAgent() {
     const [state, setState] = useState<AgentState>('idle');
     const [level, setLevel] = useState(0);
     const [messages, setMessages] = useState<ChatMessage[]>([]);
+    const historyRef = useRef<HistoryMessage[]>([]);
     const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
     const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -126,7 +134,7 @@ export function useVoiceAgent() {
         cleanupStream();
 
         try {
-            const history = messages.slice(-MAX_HISTORY_TURNS * 2);
+            const history = historyRef.current.slice(-MAX_HISTORY_TURNS * 2);
 
             const formData = new FormData();
             formData.append('audio', audioBlob, 'speech.webm');
@@ -150,6 +158,12 @@ export function useVoiceAgent() {
                 return;
             }
 
+            historyRef.current = [
+                ...historyRef.current,
+                { role: 'user', content: data.transcript },
+                ...(data.history_append ?? []),
+                { role: 'assistant', content: data.reply },
+            ];
             setMessages((prev) => [
                 ...prev,
                 { role: 'user', content: data.transcript },
@@ -174,7 +188,7 @@ export function useVoiceAgent() {
             stopLevelLoop();
 
             try {
-                const history = messages.slice(-MAX_HISTORY_TURNS * 2);
+                const history = historyRef.current.slice(-MAX_HISTORY_TURNS * 2);
 
                 const formData = new FormData();
                 formData.append('text', trimmed);
@@ -198,6 +212,12 @@ export function useVoiceAgent() {
                     return;
                 }
 
+                historyRef.current = [
+                    ...historyRef.current,
+                    { role: 'user', content: data.transcript },
+                    ...(data.history_append ?? []),
+                    { role: 'assistant', content: data.reply },
+                ];
                 setMessages((prev) => [
                     ...prev,
                     { role: 'user', content: data.transcript },

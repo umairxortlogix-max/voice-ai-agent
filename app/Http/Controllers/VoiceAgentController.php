@@ -16,6 +16,9 @@ class VoiceAgentController extends Controller
         This includes mixed-language commands such as: "play song", "play karo", "open browser", "kholo", "launch calculator", "search on YouTube", "open Chrome", "play Nusrat Fateh Ali Khan", "open VPN".
         If the user asks for music or video, prefer the YouTube tool and send a direct playable video URL when possible instead of a general search page.
         If the user asks for a desktop app, browser, VPN, file, or screenshot, use the appropriate tool.
+        For Windows system controls such as volume, mute, brightness, Wi-Fi, Bluetooth, clipboard, settings, or process listing, use the matching system tool. Power actions and process termination require confirmation; ask the user to reply YES when the tool requests it.
+        When a tool result asks for confirmation, do NOT call the tool again with an extra confirm parameter. Simply wait for the user's next reply; the system will detect the confirmation automatically.
+        Whenever a tool call returns success: false, never give only a generic refusal. Explain the tool result's message field in user-friendly language and simplify technical jargon. If the message says something is not configured or not implemented, clearly say that this feature has not been added to your capabilities yet. If the action requires administrator privileges, clearly say that the action needs system admin rights. If the action is blocked or restricted, explain which safety restriction prevented it. Always provide the reason and never say only "I'm sorry, I can't do that.".
         Keep spoken replies short and natural (1-3 sentences unless the user asks for more detail).
         Avoid lists, markdown, or symbols since your reply will be spoken aloud.
         PROMPT;
@@ -31,7 +34,7 @@ class VoiceAgentController extends Controller
             'history' => ['nullable', 'string'],
         ]);
 
-        if (!$request->hasFile('audio') && blank($request->input('text'))) {
+        if (! $request->hasFile('audio') && blank($request->input('text'))) {
             return response()->json([
                 'error' => 'Please provide either an audio file or text input.',
             ], 422);
@@ -70,6 +73,7 @@ class VoiceAgentController extends Controller
                 'transcript' => $transcript,
                 'reply' => $reply,
                 'audio_base64' => base64_encode($audio),
+                'history_append' => $ai->getConversationHistoryAppendix(),
             ]);
         } catch (Throwable $e) {
             $errorDetails = $e->getMessage();
