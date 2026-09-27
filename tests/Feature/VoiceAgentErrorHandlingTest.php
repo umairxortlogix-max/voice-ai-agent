@@ -23,8 +23,8 @@ class VoiceAgentErrorHandlingTest extends TestCase
         $service = Mockery::mock(OpenAIService::class);
         $service->shouldReceive('transcribe')->once()->andThrow(new RuntimeException('Incorrect API key provided'));
 
-        $controller = new VoiceAgentController();
-        $request = new Request();
+        $controller = new VoiceAgentController;
+        $request = new Request;
         $request->files->add([
             'audio' => UploadedFile::fake()->create('voice.wav', 1, 'audio/wav'),
         ]);
@@ -40,8 +40,8 @@ class VoiceAgentErrorHandlingTest extends TestCase
         $service = Mockery::mock(OpenAIService::class);
         $service->shouldReceive('transcribe')->once()->andThrow(new RuntimeException('You have no credits remaining. Add credits to continue using the API.'));
 
-        $controller = new VoiceAgentController();
-        $request = new Request();
+        $controller = new VoiceAgentController;
+        $request = new Request;
         $request->files->add([
             'audio' => UploadedFile::fake()->create('voice.wav', 1, 'audio/wav'),
         ]);

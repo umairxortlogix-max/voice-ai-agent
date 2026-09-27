@@ -64,7 +64,7 @@ class OpenAIServiceFallbackTest extends TestCase
         foreach ([
             'set_volume', 'toggle_mute', 'set_brightness', 'toggle_wifi', 'toggle_bluetooth',
             'system_power_action', 'open_settings_page', 'get_clipboard', 'set_clipboard',
-            'list_running_processes', 'kill_process',
+            'list_running_processes', 'kill_process', 'find_and_open_file', 'open_folder',
         ] as $toolName) {
             $this->assertArrayHasKey($toolName, $tools->all());
             $this->assertArrayHasKey('required', $tools[$toolName]['function']['parameters']);
@@ -124,12 +124,12 @@ class OpenAIServiceFallbackTest extends TestCase
         $service = new OpenAIService;
 
         $result = json_decode($service->executeTool('youtube_search_and_play', [
-            'query' => '',
+            'query' => 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
             'mode' => 'search',
         ]), true);
 
         $this->assertTrue($result['success']);
-        $this->assertSame('', $result['url']);
+        $this->assertSame('https://www.youtube.com/watch?v=dQw4w9WgXcQ', $result['url']);
     }
 
     public function test_it_tries_to_resolve_a_song_query_to_an_actual_youtube_video(): void
@@ -161,5 +161,29 @@ class OpenAIServiceFallbackTest extends TestCase
         $this->assertStringContainsString('administrator privileges', strtolower($prompt));
         $this->assertStringContainsString('safety restriction', strtolower($prompt));
         $this->assertStringContainsString("i'm sorry, i can't do that", strtolower($prompt));
+    }
+
+    public function test_it_handles_find_and_open_file_tool(): void
+    {
+        $service = new OpenAIService;
+
+        $empty = json_decode($service->executeTool('find_and_open_file', ['file_name' => '']), true);
+        $this->assertFalse($empty['success']);
+
+        $notFound = json_decode($service->executeTool('find_and_open_file', ['file_name' => 'non_existent_random_file_xyz_123.fake']), true);
+        $this->assertFalse($notFound['success']);
+        $this->assertStringContainsString('could not find', strtolower((string) $notFound['message']));
+    }
+
+    public function test_it_handles_open_folder_tool(): void
+    {
+        $service = new OpenAIService;
+
+        $empty = json_decode($service->executeTool('open_folder', ['folder_name' => '']), true);
+        $this->assertFalse($empty['success']);
+
+        $notFound = json_decode($service->executeTool('open_folder', ['folder_name' => 'non_existent_folder_xyz_999']), true);
+        $this->assertFalse($notFound['success']);
+        $this->assertStringContainsString('could not find', strtolower((string) $notFound['message']));
     }
 }

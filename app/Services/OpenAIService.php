@@ -534,6 +534,40 @@ class OpenAIService
                     ],
                 ],
             ],
+            [
+                'type' => 'function',
+                'function' => [
+                    'name' => 'find_and_open_file',
+                    'description' => 'Search the computer drives (D:, Downloads, Videos, Music, Pictures, Desktop, Documents, etc.) for a local file (such as a video, movie, cartoon, song, MP3, picture, photo, document, PDF) by its name or search query, and automatically open or play it in the default Windows application. Use this whenever the user asks to play a video/movie/song or open a file on their PC.',
+                    'parameters' => [
+                        'type' => 'object',
+                        'properties' => [
+                            'file_name' => [
+                                'type' => 'string',
+                                'description' => 'The name, partial name, or search query of the file to find and open (e.g. "Kicko", "Selfie with Bajrangi", "sample.mp4", "Chittiyaan Kalaiyaan", "profile.png").',
+                            ],
+                        ],
+                        'required' => ['file_name'],
+                    ],
+                ],
+            ],
+            [
+                'type' => 'function',
+                'function' => [
+                    'name' => 'open_folder',
+                    'description' => 'Open a folder or directory on the computer in Windows File Explorer by name or path (e.g. "movie", "song s", "Cartoon Episode", "Downloads", "Desktop", "D:\\video project"). Use this whenever the user asks to open a folder or directory on their PC.',
+                    'parameters' => [
+                        'type' => 'object',
+                        'properties' => [
+                            'folder_name' => [
+                                'type' => 'string',
+                                'description' => 'The folder name or path to open, e.g. "movie", "Downloads", "D:\\Cartoon Episode (2026) HD".',
+                            ],
+                        ],
+                        'required' => ['folder_name'],
+                    ],
+                ],
+            ],
         ];
     }
 
@@ -1213,6 +1247,178 @@ class OpenAIService
             : $result;
     }
 
+    protected function toolFindAndOpenFile(string $fileName): array
+    {
+        $fileName = trim($fileName);
+        if ($fileName === '') {
+            return ['success' => false, 'message' => 'Please provide a file name or search term to open.'];
+        }
+
+        if (strtoupper(substr(PHP_OS, 0, 3)) !== 'WIN') {
+            return ['success' => false, 'message' => 'This Windows-only tool is unavailable on the current operating system.'];
+        }
+
+        if (is_file($fileName)) {
+            $launchResult = $this->runPowerShell(sprintf('Start-Process -FilePath %s', $this->powershellLiteral($fileName)));
+            if ($launchResult['success']) {
+                return ['success' => true, 'path' => $fileName, 'message' => sprintf('Opened %s.', basename($fileName))];
+            }
+        }
+
+        $cleanQuery = trim((string) preg_replace('/["\'`;&|<>*?]/', '', $fileName));
+        if ($cleanQuery === '') {
+            return ['success' => false, 'message' => 'Invalid file name characters provided.'];
+        }
+
+        $script = sprintf(
+            '$query = %s; '
+            .'$searchDirs = @( '
+            .'    [Environment]::GetFolderPath(\'Desktop\'), '
+            .'    (Join-Path $env:USERPROFILE \'Downloads\'), '
+            .'    [Environment]::GetFolderPath(\'MyVideos\'), '
+            .'    [Environment]::GetFolderPath(\'MyMusic\'), '
+            .'    [Environment]::GetFolderPath(\'MyPictures\'), '
+            .'    [Environment]::GetFolderPath(\'MyDocuments\'), '
+            .'    (Join-Path $env:USERPROFILE \'OneDrive\Desktop\'), '
+            .'    (Join-Path $env:USERPROFILE \'OneDrive\Documents\'), '
+            .'    (Join-Path $env:USERPROFILE \'OneDrive\Pictures\') '
+            .'); '
+            .'$drives = Get-PSDrive -PSProvider FileSystem | Where-Object { $_.Root -ne \'C:\\\' } | Select-Object -ExpandProperty Root; '
+            .'foreach ($d in $drives) { '
+            .'    if (Test-Path -LiteralPath $d) { '
+            .'        $searchDirs += $d; '
+            .'        $subDirs = Get-ChildItem -LiteralPath $d -Directory -ErrorAction SilentlyContinue | Where-Object { $_.Name -notmatch \'^(\$Recycle\.Bin|System Volume Information|\.git|node_modules|vendor)$\' }; '
+            .'        foreach ($s in $subDirs) { $searchDirs += $s.FullName }; '
+            .'    } '
+            .'}; '
+            .'$words = $query -split \'\s+\' | Where-Object { $_.Length -gt 1 }; '
+            .'$filter = \'*\' + $query + \'*\'; '
+            .'$found = $null; '
+            .'foreach ($dir in $searchDirs) { '
+            .'    if (Test-Path -LiteralPath $dir) { '
+            .'        $file = Get-ChildItem -Path $dir -Filter $filter -File -Recurse -Depth 3 -ErrorAction SilentlyContinue | Select-Object -First 1; '
+            .'        if (-not $file -and $words.Count -gt 1) { '
+            .'            $file = Get-ChildItem -Path $dir -File -Recurse -Depth 3 -ErrorAction SilentlyContinue | Where-Object { '
+            .'                $name = $_.Name; $match = $true; '
+            .'                foreach ($w in $words) { if ($name -notlike (\'*\' + $w + \'*\')) { $match = $false; break } }; '
+            .'                $match '
+            .'            } | Select-Object -First 1; '
+            .'        }; '
+            .'        if ($file) { $found = $file.FullName; break }; '
+            .'    } '
+            .'}; '
+            .'if ($found) { '
+            .'    Start-Process -FilePath $found; '
+            .'    Write-Output (\'FOUND:\' + $found); '
+            .'} else { '
+            .'    Write-Output \'NOT_FOUND\'; '
+            .'}',
+            $this->powershellLiteral($cleanQuery)
+        );
+
+        $result = $this->runPowerShell($script);
+        if (! $result['success']) {
+            return ['success' => false, 'message' => 'Unable to search for file: '.($result['message'] ?? 'command failed')];
+        }
+
+        $output = trim((string) ($result['output'] ?? ''));
+        if (str_starts_with($output, 'FOUND:')) {
+            $matchedPath = substr($output, 6);
+
+            return [
+                'success' => true,
+                'path' => $matchedPath,
+                'message' => sprintf('Found and opened %s in its default player.', basename($matchedPath)),
+            ];
+        }
+
+        return [
+            'success' => false,
+            'message' => sprintf('Could not find any file matching "%s" on your PC.', $fileName),
+        ];
+    }
+
+    protected function toolOpenFolder(string $folderName): array
+    {
+        $folderName = trim($folderName);
+        if ($folderName === '') {
+            return ['success' => false, 'message' => 'Please provide a folder name or path to open.'];
+        }
+
+        if (strtoupper(substr(PHP_OS, 0, 3)) !== 'WIN') {
+            return ['success' => false, 'message' => 'This Windows-only tool is unavailable on the current operating system.'];
+        }
+
+        if (is_dir($folderName)) {
+            $launchResult = $this->runPowerShell(sprintf('Start-Process explorer.exe -ArgumentList %s', $this->powershellLiteral($folderName)));
+            if ($launchResult['success']) {
+                return ['success' => true, 'path' => $folderName, 'message' => sprintf('Opened folder %s in File Explorer.', basename($folderName))];
+            }
+        }
+
+        $cleanTarget = trim((string) preg_replace('/["\'`;&|<>*?]/', '', $folderName));
+        if ($cleanTarget === '') {
+            return ['success' => false, 'message' => 'Invalid folder name provided.'];
+        }
+
+        $script = sprintf(
+            '$target = %s; '
+            .'$shortcuts = @{ '
+            .'    \'downloads\' = (Join-Path $env:USERPROFILE \'Downloads\'); '
+            .'    \'desktop\' = [Environment]::GetFolderPath(\'Desktop\'); '
+            .'    \'documents\' = [Environment]::GetFolderPath(\'MyDocuments\'); '
+            .'    \'pictures\' = [Environment]::GetFolderPath(\'MyPictures\'); '
+            .'    \'videos\' = [Environment]::GetFolderPath(\'MyVideos\'); '
+            .'    \'music\' = [Environment]::GetFolderPath(\'MyMusic\') '
+            .'}; '
+            .'$clean = $target.ToLower().Trim(); '
+            .'if ($shortcuts.ContainsKey($clean) -and (Test-Path -LiteralPath $shortcuts[$clean])) { '
+            .'    $p = $shortcuts[$clean]; '
+            .'    Start-Process explorer.exe -ArgumentList $p; '
+            .'    Write-Output (\'OPENED:\' + $p); '
+            .'    exit 0; '
+            .'}; '
+            .'$searchRoots = @(); '
+            .'$drives = Get-PSDrive -PSProvider FileSystem | Where-Object { $_.Root -ne \'C:\\\' } | Select-Object -ExpandProperty Root; '
+            .'foreach ($d in $drives) { if (Test-Path -LiteralPath $d) { $searchRoots += $d } }; '
+            .'$searchRoots += $env:USERPROFILE; '
+            .'$filter = \'*\' + $target + \'*\'; '
+            .'$found = $null; '
+            .'foreach ($root in $searchRoots) { '
+            .'    $dir = Get-ChildItem -Path $root -Directory -Filter $filter -Recurse -Depth 2 -ErrorAction SilentlyContinue | Where-Object { $_.Name -notmatch \'^(\$Recycle\.Bin|System Volume Information|\.git|node_modules|vendor)$\' } | Select-Object -First 1; '
+            .'    if ($dir) { $found = $dir.FullName; break }; '
+            .'}; '
+            .'if ($found) { '
+            .'    Start-Process explorer.exe -ArgumentList $found; '
+            .'    Write-Output (\'OPENED:\' + $found); '
+            .'} else { '
+            .'    Write-Output \'NOT_FOUND\'; '
+            .'}',
+            $this->powershellLiteral($cleanTarget)
+        );
+
+        $result = $this->runPowerShell($script);
+        if (! $result['success']) {
+            return ['success' => false, 'message' => 'Unable to open folder: '.($result['message'] ?? 'command failed')];
+        }
+
+        $output = trim((string) ($result['output'] ?? ''));
+        if (str_starts_with($output, 'OPENED:')) {
+            $openedPath = substr($output, 7);
+
+            return [
+                'success' => true,
+                'path' => $openedPath,
+                'message' => sprintf('Opened folder %s in File Explorer.', basename($openedPath)),
+            ];
+        }
+
+        return [
+            'success' => false,
+            'message' => sprintf('Could not find any folder matching "%s" on your PC.', $folderName),
+        ];
+    }
+
     protected function toolSystemPowerAction(string $action): array
     {
         $commands = [
@@ -1319,6 +1525,8 @@ class OpenAIService
             'set_clipboard' => $this->toolSetClipboard((string) ($arguments['text'] ?? '')),
             'list_running_processes' => $this->toolListProcesses((string) ($arguments['filter'] ?? '')),
             'kill_process' => $this->toolKillProcess(isset($arguments['process_name']) ? (string) $arguments['process_name'] : null, $arguments['process_id'] ?? null),
+            'find_and_open_file' => $this->toolFindAndOpenFile((string) ($arguments['file_name'] ?? '')),
+            'open_folder' => $this->toolOpenFolder((string) ($arguments['folder_name'] ?? '')),
             default => ['success' => false, 'message' => sprintf('Tool "%s" is not supported.', $toolName)],
         };
     }
