@@ -19,11 +19,23 @@ import { useState } from 'react';
 import VoiceOrb from '../Components/VoiceOrb';
 import TranscriptPanel from '../Components/TranscriptPanel';
 import { useVoiceAgent } from '../hooks/useVoiceAgent';
+import { useWakeWord } from '../hooks/useWakeWord';
 
 export default function VoiceAgent() {
     const { state, level, messages, errorMessage, startListening, stopListeningAndSend, sendTextMessage, cancel } =
         useVoiceAgent();
     const [draftText, setDraftText] = useState('');
+    const [wakeWordEnabled, setWakeWordEnabled] = useState(false);
+
+    const { isListening: isWakeListening, isSupported: isWakeSupported } = useWakeWord({
+        enabled: wakeWordEnabled,
+        isBusy: state !== 'idle',
+        onWake: () => {
+            if (state === 'idle') {
+                startListening();
+            }
+        },
+    });
 
     const handleMicClick = () => {
         if (state === 'idle' || state === 'error') startListening();
@@ -104,7 +116,35 @@ export default function VoiceAgent() {
                         </div>
                     </div>
 
-                    <div className="flex items-center gap-4">
+                    <div className="flex items-center gap-3">
+                        {isWakeSupported && (
+                            <button
+                                type="button"
+                                onClick={() => setWakeWordEnabled((prev) => !prev)}
+                                className={`flex items-center gap-2 rounded-full border px-3 py-1.5 backdrop-blur-sm transition-all text-[9px] uppercase tracking-[0.2em] ${
+                                    wakeWordEnabled
+                                        ? 'border-emerald-400/40 bg-emerald-950/40 text-emerald-300 shadow-[0_0_15px_rgba(16,185,129,0.25)]'
+                                        : 'border-slate-700/50 bg-slate-900/40 text-slate-400 hover:text-slate-300'
+                                }`}
+                                title={
+                                    wakeWordEnabled
+                                        ? "Wake Word Active: say 'Hey Assistant', 'Hey Jarvis', or 'Suno'"
+                                        : "Click to enable hands-free Wake Word ('Hey Assistant' / 'Hey Jarvis' / 'Suno')"
+                                }
+                            >
+                                <span
+                                    className={`h-2 w-2 rounded-full ${
+                                        wakeWordEnabled && isWakeListening
+                                            ? 'bg-emerald-400 animate-pulse'
+                                            : wakeWordEnabled
+                                              ? 'bg-emerald-600'
+                                              : 'bg-slate-600'
+                                    }`}
+                                />
+                                <span>Wake Word: {wakeWordEnabled ? 'ON' : 'OFF'}</span>
+                            </button>
+                        )}
+
                         <div className="flex items-center gap-2 rounded-full border border-cyan-400/15 bg-slate-900/30 px-3 py-1.5 backdrop-blur-sm">
                             <span
                                 className={`status-dot ${
@@ -190,6 +230,11 @@ export default function VoiceAgent() {
                             <p className="text-sm font-medium tracking-[0.18em] text-cyan-100/75 uppercase">
                                 {state === 'listening' ? 'Tap to stop and send' : 'Tap to talk'}
                             </p>
+                            {wakeWordEnabled && state === 'idle' && (
+                                <p className="text-xs text-emerald-400/80 animate-pulse">
+                                    🎙️ Listening for &ldquo;Hey Assistant&rdquo; / &ldquo;Hey Jarvis&rdquo; / &ldquo;Suno&rdquo;...
+                                </p>
+                            )}
                         </div>
 
                         <form onSubmit={handleTextSubmit} className="flex w-full max-w-xl items-center gap-3 rounded-2xl border border-cyan-400/20 bg-slate-900/40 px-3 py-2 backdrop-blur-sm">

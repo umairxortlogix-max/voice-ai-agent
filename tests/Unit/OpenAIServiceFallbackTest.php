@@ -62,9 +62,10 @@ class OpenAIServiceFallbackTest extends TestCase
         $tools = collect($service->getAvailableTools())->keyBy('function.name');
 
         foreach ([
-            'set_volume', 'toggle_mute', 'set_brightness', 'toggle_wifi', 'toggle_bluetooth',
+            'set_volume', 'toggle_mute', 'set_brightness', 'toggle_wifi', 'toggle_ethernet', 'toggle_bluetooth',
             'system_power_action', 'open_settings_page', 'get_clipboard', 'set_clipboard',
             'list_running_processes', 'kill_process', 'find_and_open_file', 'open_folder',
+            'control_media', 'manage_windows', 'get_system_stats',
         ] as $toolName) {
             $this->assertArrayHasKey($toolName, $tools->all());
             $this->assertArrayHasKey('required', $tools[$toolName]['function']['parameters']);
@@ -185,5 +186,48 @@ class OpenAIServiceFallbackTest extends TestCase
         $notFound = json_decode($service->executeTool('open_folder', ['folder_name' => 'non_existent_folder_xyz_999']), true);
         $this->assertFalse($notFound['success']);
         $this->assertStringContainsString('could not find', strtolower((string) $notFound['message']));
+    }
+
+    public function test_it_handles_network_adapter_toggle(): void
+    {
+        $service = new OpenAIService;
+
+        $wifiResult = json_decode($service->executeTool('toggle_wifi', ['action' => 'off']), true);
+        $this->assertIsArray($wifiResult);
+        $this->assertArrayHasKey('success', $wifiResult);
+        $this->assertArrayHasKey('message', $wifiResult);
+
+        $ethernetResult = json_decode($service->executeTool('toggle_ethernet', ['action' => 'invalid']), true);
+        $this->assertFalse($ethernetResult['success']);
+        $this->assertStringContainsString('must be on or off', $ethernetResult['message']);
+    }
+
+    public function test_it_handles_brightness_adjustment(): void
+    {
+        $service = new OpenAIService;
+
+        $result = json_decode($service->executeTool('set_brightness', ['level' => 60]), true);
+        $this->assertIsArray($result);
+        $this->assertArrayHasKey('success', $result);
+        $this->assertArrayHasKey('message', $result);
+    }
+
+    public function test_it_handles_media_windows_and_system_stats(): void
+    {
+        $service = new OpenAIService;
+
+        $mediaResult = json_decode($service->executeTool('control_media', ['action' => 'play_pause']), true);
+        $this->assertIsArray($mediaResult);
+        $this->assertTrue($mediaResult['success']);
+
+        $windowsResult = json_decode($service->executeTool('manage_windows', ['action' => 'invalid_action']), true);
+        $this->assertIsArray($windowsResult);
+        $this->assertFalse($windowsResult['success']);
+
+        $statsResult = json_decode($service->executeTool('get_system_stats', []), true);
+        $this->assertIsArray($statsResult);
+        $this->assertTrue($statsResult['success']);
+        $this->assertStringContainsString('cpu', strtolower($statsResult['message']));
+        $this->assertStringContainsString('ram', strtolower($statsResult['message']));
     }
 }

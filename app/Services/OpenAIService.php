@@ -452,6 +452,18 @@ class OpenAIService
             [
                 'type' => 'function',
                 'function' => [
+                    'name' => 'toggle_ethernet',
+                    'description' => 'Enable or disable the Windows Ethernet network adapter. Requires administrator privileges.',
+                    'parameters' => [
+                        'type' => 'object',
+                        'properties' => ['action' => ['type' => 'string', 'enum' => ['on', 'off']]],
+                        'required' => ['action'],
+                    ],
+                ],
+            ],
+            [
+                'type' => 'function',
+                'function' => [
                     'name' => 'toggle_bluetooth',
                     'description' => 'Enable or disable the Windows Bluetooth adapter. Requires administrator privileges.',
                     'parameters' => [
@@ -568,6 +580,54 @@ class OpenAIService
                     ],
                 ],
             ],
+            [
+                'type' => 'function',
+                'function' => [
+                    'name' => 'control_media',
+                    'description' => 'Control system media playback (play, pause, next track, previous track, or stop) across any running media player, browser, Spotify, or YouTube.',
+                    'parameters' => [
+                        'type' => 'object',
+                        'properties' => [
+                            'action' => [
+                                'type' => 'string',
+                                'enum' => ['play_pause', 'next', 'previous', 'stop'],
+                                'description' => 'Media action: play_pause (toggles playback/pause), next (skip track), previous (previous track), stop',
+                            ],
+                        ],
+                        'required' => ['action'],
+                    ],
+                ],
+            ],
+            [
+                'type' => 'function',
+                'function' => [
+                    'name' => 'manage_windows',
+                    'description' => 'Manage desktop windows such as showing the desktop, minimizing all windows, restoring windows, or closing the active window.',
+                    'parameters' => [
+                        'type' => 'object',
+                        'properties' => [
+                            'action' => [
+                                'type' => 'string',
+                                'enum' => ['show_desktop', 'minimize_all', 'restore_all', 'close_active_window'],
+                                'description' => 'Window action: show_desktop, minimize_all, restore_all, close_active_window',
+                            ],
+                        ],
+                        'required' => ['action'],
+                    ],
+                ],
+            ],
+            [
+                'type' => 'function',
+                'function' => [
+                    'name' => 'get_system_stats',
+                    'description' => 'Retrieve current system performance stats including CPU load percentage, RAM usage (used/total and percentage), and C drive free/used storage.',
+                    'parameters' => [
+                        'type' => 'object',
+                        'properties' => [],
+                        'required' => [],
+                    ],
+                ],
+            ],
         ];
     }
 
@@ -652,6 +712,10 @@ class OpenAIService
     protected function openBrowserTool(string $browser, array $profiles = [], string $url = ''): array
     {
         $browser = strtolower(trim((string) $browser));
+        if ($browser === '' || $browser === 'browser' || $browser === 'default') {
+            $browser = 'chrome';
+        }
+
         $allowed = ['chrome', 'edge', 'firefox'];
 
         if (! in_array($browser, $allowed, true)) {
@@ -692,7 +756,11 @@ class OpenAIService
 
         $safeUrl = trim((string) $url);
         if ($safeUrl !== '') {
-            $safeUrl = 'https://'.preg_replace('/^https?:\/\//i', '', $safeUrl);
+            if (! preg_match('/^https?:\/\//i', $safeUrl) && ! str_contains($safeUrl, '.') && ! str_starts_with($safeUrl, 'localhost')) {
+                $safeUrl = 'https://www.google.com/search?q='.urlencode($safeUrl);
+            } else {
+                $safeUrl = 'https://'.preg_replace('/^https?:\/\//i', '', $safeUrl);
+            }
         }
 
         $opened = [];
@@ -1051,7 +1119,8 @@ class OpenAIService
             return ['success' => false, 'message' => 'This Windows-only tool is unavailable on the current operating system.'];
         }
 
-        $command = sprintf('powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command %s 2>&1', escapeshellarg($script));
+        $encoded = base64_encode(mb_convert_encoding($script, 'UTF-16LE', 'UTF-8'));
+        $command = sprintf('powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand %s 2>&1', $encoded);
         $output = [];
         $exitCode = 0;
         exec($command, $output, $exitCode);
@@ -1063,7 +1132,28 @@ class OpenAIService
                 return ['success' => false, 'message' => 'Requires administrator privileges. Run Laragon/PHP as Administrator.'];
             }
 
-            return ['success' => false, 'message' => $message !== '' ? $message : 'Windows command failed.'];
+            if (str_contains($message, '#< CLIXML')) {
+                if (preg_match_all('/<S S="Error">([^<]+)<\/S>/', $message, $matches)) {
+                    $extracted = implode(' ', array_map(function ($part) {
+                        return trim(str_replace(['_x000D_', '_x000A_'], ["\r", "\n"], html_entity_decode($part, ENT_QUOTES)));
+                    }, $matches[1]));
+                    if ($extracted !== '') {
+                        $message = $extracted;
+                    }
+                }
+            }
+
+            $lines = array_filter(array_map('trim', explode(PHP_EOL, $message)));
+            $cleanLines = [];
+            foreach ($lines as $line) {
+                if (str_starts_with($line, 'At line:') || str_starts_with($line, '+') || str_starts_with($line, '~~~~') || str_contains($line, 'CategoryInfo') || str_contains($line, 'FullyQualifiedErrorId') || str_contains($line, '#< CLIXML') || str_contains($line, '<Objs Version=')) {
+                    continue;
+                }
+                $cleanLines[] = preg_replace('/^powershell\.exe\s*:\s*/i', '', $line);
+            }
+            $cleanMessage = trim(implode(' ', array_filter($cleanLines)));
+
+            return ['success' => false, 'message' => $cleanMessage !== '' ? $cleanMessage : 'Windows command failed.'];
         }
 
         return ['success' => true, 'output' => $message];
@@ -1130,12 +1220,67 @@ class OpenAIService
     protected function toolSetBrightness(mixed $level): array
     {
         $value = $this->clampPercentage($level);
-        $script = sprintf('$methods = Get-CimInstance -Namespace root/WMI -ClassName WmiMonitorBrightnessMethods; if (-not $methods) { throw "No laptop brightness controller was found. External monitors may not support WMI brightness." }; $methods | Invoke-CimMethod -MethodName WmiSetBrightness -Arguments @{Timeout=1;Brightness=%d} | Out-Null', $value);
+        $cmmPath = str_replace('/', DIRECTORY_SEPARATOR, base_path('bin/tools/ControlMyMonitor.exe'));
+
+        $script = sprintf(
+            'try { '
+            .'  $cmmExe = %s; '
+            .'  if (-not (Test-Path $cmmExe)) { '
+            .'    $cmd = Get-Command ControlMyMonitor.exe -ErrorAction SilentlyContinue; '
+            .'    if ($cmd) { $cmmExe = $cmd.Source } '
+            .'  } '
+            .'  if (Test-Path $cmmExe) { '
+            .'    $targets = @(); '
+            .'    $tmp = [System.IO.Path]::GetTempFileName(); '
+            .'    Start-Process -FilePath $cmmExe -ArgumentList (\'/smonitors \' + $tmp) -Wait; '
+            .'    if (Test-Path $tmp) { '
+            .'      $lines = Get-Content $tmp; '
+            .'      foreach ($line in $lines) { '
+            .'        if ($line -like \'*Monitor Device Name:*\') { '
+            .'          $parts = $line.Split(\'"\'); '
+            .'          if ($parts.Length -ge 2) { '
+            .'            $dev = $parts[1].Trim(); '
+            .'            if ($dev -ne \'\' -and -not $targets.Contains($dev)) { $targets += $dev } '
+            .'          } '
+            .'        } '
+            .'      } '
+            .'      Remove-Item $tmp -Force -ErrorAction SilentlyContinue; '
+            .'    } '
+            .'    if ($targets.Count -eq 0) { '
+            .'      $targets = @(\'Primary\', \'Secondary\'); '
+            .'    } '
+            .'    foreach ($target in $targets) { '
+            .'      Start-Process -FilePath $cmmExe -ArgumentList (\'/SetValue "\' + $target + \'" 10 %d\') -Wait; '
+            .'      Start-Sleep -Milliseconds 400; '
+            .'    } '
+            .'    if ($targets.Count -gt 1) { '
+            .'      Start-Process -FilePath $cmmExe -ArgumentList \'/SetValue Secondary 10 %d\' -Wait; '
+            .'      Start-Sleep -Milliseconds 200; '
+            .'    } '
+            .'    [Console]::WriteLine(\'Display brightness set to %d%%.\'); '
+            .'    exit 0; '
+            .'  } '
+            .'  $methods = Get-CimInstance -Namespace root/WMI -ClassName WmiMonitorBrightnessMethods -ErrorAction Stop; '
+            .'  if (-not $methods) { throw "No laptop or external monitor brightness controller was found." }; '
+            .'  $methods | Invoke-CimMethod -MethodName WmiSetBrightness -Arguments @{Timeout=1;Brightness=%d} | Out-Null; '
+            .'  [Console]::WriteLine(\'Display brightness set to %d%%.\'); '
+            .'  exit 0; '
+            .'} catch { '
+            .'  [Console]::WriteLine($_.Exception.Message); '
+            .'  exit 1; '
+            .'}',
+            $this->powershellLiteral($cmmPath),
+            $value,
+            $value,
+            $value,
+            $value,
+            $value
+        );
         $result = $this->runPowerShell($script);
 
         return $result['success']
             ? ['success' => true, 'message' => sprintf('Display brightness set to %d%%.', $value)]
-            : ['success' => false, 'message' => $result['message'].' External monitors may not support WMI brightness control.'];
+            : ['success' => false, 'message' => $result['message']];
     }
 
     protected function toolToggleAdapter(string $adapterPattern, string $action, string $label): array
@@ -1146,7 +1291,20 @@ class OpenAIService
         }
 
         $cmdlet = $normalizedAction === 'on' ? 'Enable-NetAdapter' : 'Disable-NetAdapter';
-        $script = sprintf('$adapter = Get-NetAdapter | Where-Object { $_.InterfaceDescription -like %s -or $_.Name -like %s } | Select-Object -First 1; if (-not $adapter) { throw "%s adapter was not found." }; %s -Name $adapter.Name -Confirm:$false -ErrorAction Stop', $this->powershellLiteral($adapterPattern), $this->powershellLiteral('*'.$label.'*'), $label, $cmdlet);
+        $script = sprintf(
+            'try { '
+            .'  $adapter = Get-NetAdapter | Where-Object { $_.InterfaceDescription -like %s -or $_.Name -like %s } | Select-Object -First 1; '
+            .'  if (-not $adapter) { throw %s }; '
+            .'  %s -Name $adapter.Name -Confirm:$false -ErrorAction Stop; '
+            .'} catch { '
+            .'  [Console]::WriteLine($_.Exception.Message); '
+            .'  exit 1; '
+            .'}',
+            $this->powershellLiteral($adapterPattern),
+            $this->powershellLiteral('*'.$label.'*'),
+            $this->powershellLiteral(sprintf('%s adapter was not found.', $label)),
+            $cmdlet
+        );
         $result = $this->runPowerShell($script);
 
         return $result['success']
@@ -1156,7 +1314,42 @@ class OpenAIService
 
     protected function toolToggleWifi(string $action): array
     {
-        return $this->toolToggleAdapter('*Wi-Fi*', $action, 'Wi-Fi');
+        $normalizedAction = strtolower(trim($action));
+        if (! in_array($normalizedAction, ['on', 'off'], true)) {
+            return ['success' => false, 'message' => 'Wi-Fi action must be on or off.'];
+        }
+
+        $cmdlet = $normalizedAction === 'on' ? 'Enable-NetAdapter' : 'Disable-NetAdapter';
+        $script = sprintf(
+            'try { '
+            .'  $adapter = Get-NetAdapter | Where-Object { '
+            .'    $_.InterfaceDescription -like \'*Wi-Fi*\' -or $_.Name -like \'*Wi-Fi*\' -or '
+            .'    $_.InterfaceDescription -like \'*Wireless*\' -or $_.Name -like \'*Wireless*\' -or '
+            .'    $_.InterfaceDescription -like \'*WLAN*\' -or $_.Name -like \'*WLAN*\' -or '
+            .'    $_.InterfaceDescription -like \'*802.11*\' -or $_.Name -like \'*802.11*\' '
+            .'  } | Select-Object -First 1; '
+            .'  if (-not $adapter) { '
+            .'    $other = Get-NetAdapter | Where-Object { $_.Status -eq \'Up\' } | Select-Object -First 1; '
+            .'    if ($other) { throw "Wi-Fi adapter was not found on this computer. (Active connection is " + $other.Name + ": " + $other.InterfaceDescription + ")." } '
+            .'    else { throw "Wi-Fi adapter was not found on this computer." } '
+            .'  }; '
+            .'  %s -Name $adapter.Name -Confirm:$false -ErrorAction Stop; '
+            .'} catch { '
+            .'  [Console]::WriteLine($_.Exception.Message); '
+            .'  exit 1; '
+            .'}',
+            $cmdlet
+        );
+        $result = $this->runPowerShell($script);
+
+        return $result['success']
+            ? ['success' => true, 'message' => sprintf('Wi-Fi turned %s.', $normalizedAction === 'on' ? 'on' : 'off')]
+            : ['success' => false, 'message' => $result['message']];
+    }
+
+    protected function toolToggleEthernet(string $action): array
+    {
+        return $this->toolToggleAdapter('*Ethernet*', $action, 'Ethernet');
     }
 
     protected function toolToggleBluetooth(string $action): array
@@ -1419,6 +1612,110 @@ class OpenAIService
         ];
     }
 
+    protected function toolControlMedia(string $action): array
+    {
+        $normalized = strtolower(trim($action));
+        $codes = [
+            'play_pause' => 179,
+            'play' => 179,
+            'pause' => 179,
+            'next' => 176,
+            'previous' => 177,
+            'prev' => 177,
+            'stop' => 178,
+        ];
+
+        if (! isset($codes[$normalized])) {
+            return ['success' => false, 'message' => 'Action must be play_pause, next, previous, or stop.'];
+        }
+
+        $code = $codes[$normalized];
+        $script = sprintf(
+            '$wshell = New-Object -ComObject WScript.Shell; $wshell.SendKeys([char]%d); Write-Output "Media key sent."',
+            $code
+        );
+        $result = $this->runPowerShell($script);
+
+        $labels = [
+            'play_pause' => 'Media play/pause toggled.',
+            'play' => 'Media playback resumed.',
+            'pause' => 'Media playback paused.',
+            'next' => 'Next track played.',
+            'previous' => 'Previous track played.',
+            'prev' => 'Previous track played.',
+            'stop' => 'Media playback stopped.',
+        ];
+
+        return $result['success']
+            ? ['success' => true, 'message' => $labels[$normalized] ?? 'Media action executed.']
+            : ['success' => false, 'message' => $result['message']];
+    }
+
+    protected function toolManageWindows(string $action): array
+    {
+        $normalized = strtolower(trim($action));
+        if ($normalized === 'show_desktop' || $normalized === 'minimize_all') {
+            $script = '(New-Object -ComObject Shell.Application).MinimizeAll(); Write-Output "Desktop shown."';
+            $result = $this->runPowerShell($script);
+
+            return $result['success']
+                ? ['success' => true, 'message' => 'All windows minimized; desktop is now visible.']
+                : ['success' => false, 'message' => $result['message']];
+        }
+
+        if ($normalized === 'restore_all' || $normalized === 'undo_minimize') {
+            $script = '(New-Object -ComObject Shell.Application).UndoMinimizeALL(); Write-Output "Windows restored."';
+            $result = $this->runPowerShell($script);
+
+            return $result['success']
+                ? ['success' => true, 'message' => 'All minimized windows have been restored.']
+                : ['success' => false, 'message' => $result['message']];
+        }
+
+        if ($normalized === 'close_active_window' || $normalized === 'close_window') {
+            $script = '$wshell = New-Object -ComObject WScript.Shell; $wshell.SendKeys("%{F4}"); Write-Output "Window closed."';
+            $result = $this->runPowerShell($script);
+
+            return $result['success']
+                ? ['success' => true, 'message' => 'Active window closed.']
+                : ['success' => false, 'message' => $result['message']];
+        }
+
+        return ['success' => false, 'message' => 'Action must be show_desktop, minimize_all, restore_all, or close_active_window.'];
+    }
+
+    protected function toolGetSystemStats(): array
+    {
+        $script = 'try { '
+            .'  $cpu = (Get-CimInstance Win32_Processor | Measure-Object -Property LoadPercentage -Average).Average; '
+            .'  if ($cpu -eq $null) { $cpu = 0 }; '
+            .'  $os = Get-CimInstance Win32_OperatingSystem; '
+            .'  $totalRam = [math]::Round($os.TotalVisibleMemorySize / 1MB, 1); '
+            .'  $freeRam = [math]::Round($os.FreePhysicalMemory / 1MB, 1); '
+            .'  $usedRam = [math]::Round($totalRam - $freeRam, 1); '
+            .'  $ramPct = [math]::Round(($usedRam / $totalRam) * 100, 0); '
+            .'  $drive = Get-PSDrive C; '
+            .'  $freeDisk = [math]::Round($drive.Free / 1GB, 1); '
+            .'  $totalDisk = [math]::Round(($drive.Used + $drive.Free) / 1GB, 1); '
+            .'  $diskPct = [math]::Round(($drive.Used / ($drive.Used + $drive.Free)) * 100, 0); '
+            .'  $battery = Get-CimInstance Win32_Battery -ErrorAction SilentlyContinue; '
+            .'  $battStr = ""; '
+            .'  if ($battery) { $battStr = ", Battery: " + $battery.EstimatedChargeRemaining + "%" }; '
+            .'  $summary = "CPU load is " + $cpu + "%, RAM is " + $usedRam + " GB of " + $totalRam + " GB used (" + $ramPct + "%), and C drive has " + $freeDisk + " GB free of " + $totalDisk + " GB (" + $diskPct + "% used)" + $battStr + "."; '
+            .'  [Console]::WriteLine($summary); '
+            .'  exit 0; '
+            .'} catch { '
+            .'  [Console]::WriteLine($_.Exception.Message); '
+            .'  exit 1; '
+            .'}';
+
+        $result = $this->runPowerShell($script);
+
+        return $result['success']
+            ? ['success' => true, 'message' => $result['output'] ?? 'System stats retrieved.']
+            : ['success' => false, 'message' => 'Unable to read system statistics: '.$result['message']];
+    }
+
     protected function toolSystemPowerAction(string $action): array
     {
         $commands = [
@@ -1518,6 +1815,7 @@ class OpenAIService
             'toggle_mute' => $this->toolToggleMute(),
             'set_brightness' => $this->toolSetBrightness($arguments['level'] ?? 0),
             'toggle_wifi' => $this->toolToggleWifi((string) ($arguments['action'] ?? '')),
+            'toggle_ethernet' => $this->toolToggleEthernet((string) ($arguments['action'] ?? '')),
             'toggle_bluetooth' => $this->toolToggleBluetooth((string) ($arguments['action'] ?? '')),
             'system_power_action' => $this->toolSystemPowerAction((string) ($arguments['action'] ?? '')),
             'open_settings_page' => $this->toolOpenSettings((string) ($arguments['page'] ?? '')),
@@ -1527,6 +1825,9 @@ class OpenAIService
             'kill_process' => $this->toolKillProcess(isset($arguments['process_name']) ? (string) $arguments['process_name'] : null, $arguments['process_id'] ?? null),
             'find_and_open_file' => $this->toolFindAndOpenFile((string) ($arguments['file_name'] ?? '')),
             'open_folder' => $this->toolOpenFolder((string) ($arguments['folder_name'] ?? '')),
+            'control_media' => $this->toolControlMedia((string) ($arguments['action'] ?? '')),
+            'manage_windows' => $this->toolManageWindows((string) ($arguments['action'] ?? '')),
+            'get_system_stats' => $this->toolGetSystemStats(),
             default => ['success' => false, 'message' => sprintf('Tool "%s" is not supported.', $toolName)],
         };
     }
