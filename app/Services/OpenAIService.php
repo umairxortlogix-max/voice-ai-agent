@@ -628,6 +628,103 @@ class OpenAIService
                     ],
                 ],
             ],
+            [
+                'type' => 'function',
+                'function' => [
+                    'name' => 'send_whatsapp_message',
+                    'description' => 'Send or compose a WhatsApp message to a contact name (from saved contacts) or directly to a phone number. Opens WhatsApp with the chat and message pre-filled.',
+                    'parameters' => [
+                        'type' => 'object',
+                        'properties' => [
+                            'recipient' => [
+                                'type' => 'string',
+                                'description' => 'Contact name (e.g. "Ali", "Boss") or phone number (e.g. "03001234567", "+923001234567").',
+                            ],
+                            'message' => [
+                                'type' => 'string',
+                                'description' => 'The text message to send on WhatsApp.',
+                            ],
+                            'auto_send' => [
+                                'type' => 'boolean',
+                                'description' => 'If true, attempts to automatically send the message. Default is false (leaves pre-filled for user review).',
+                            ],
+                        ],
+                        'required' => ['recipient', 'message'],
+                    ],
+                ],
+            ],
+            [
+                'type' => 'function',
+                'function' => [
+                    'name' => 'save_contact',
+                    'description' => 'Save or update a contact in the local address book with their phone number and optional email for easy WhatsApp messaging and emailing.',
+                    'parameters' => [
+                        'type' => 'object',
+                        'properties' => [
+                            'name' => [
+                                'type' => 'string',
+                                'description' => 'The contact or person name (e.g. "Ali", "Hamza", "Papa", "Client").',
+                            ],
+                            'phone' => [
+                                'type' => 'string',
+                                'description' => 'The phone number (e.g. "03001234567" or "+923001234567").',
+                            ],
+                            'email' => [
+                                'type' => 'string',
+                                'description' => 'Optional email address (e.g. "ali@example.com").',
+                            ],
+                        ],
+                        'required' => ['name', 'phone'],
+                    ],
+                ],
+            ],
+            [
+                'type' => 'function',
+                'function' => [
+                    'name' => 'list_contacts',
+                    'description' => 'List all saved contacts or search contacts by name or phone number from the local address book.',
+                    'parameters' => [
+                        'type' => 'object',
+                        'properties' => [
+                            'filter' => [
+                                'type' => 'string',
+                                'description' => 'Optional search query to filter contacts by name or phone.',
+                            ],
+                        ],
+                        'required' => [],
+                    ],
+                ],
+            ],
+            [
+                'type' => 'function',
+                'function' => [
+                    'name' => 'compose_email',
+                    'description' => 'Compose an email draft to a recipient email address or saved contact name. Opens Gmail web compose or system default email client with recipient, subject, and body pre-filled.',
+                    'parameters' => [
+                        'type' => 'object',
+                        'properties' => [
+                            'to' => [
+                                'type' => 'string',
+                                'description' => 'The recipient email address or saved contact name.',
+                            ],
+                            'subject' => [
+                                'type' => 'string',
+                                'description' => 'The subject line of the email.',
+                            ],
+                            'body' => [
+                                'type' => 'string',
+                                'description' => 'The content/body text of the email.',
+                            ],
+                            'provider' => [
+                                'type' => 'string',
+                                'enum' => ['gmail', 'default'],
+                                'description' => 'Whether to open in Gmail browser compose or the OS default mail client (mailto:). Default is gmail.',
+                            ],
+                        ],
+                        'required' => ['to', 'subject', 'body'],
+                    ],
+                ],
+            ],
         ];
     }
 
@@ -1736,6 +1833,283 @@ class OpenAIService
             : $result;
     }
 
+    protected function getContactsFilePath(): string
+    {
+        return storage_path('app/contacts.json');
+    }
+
+    protected function loadContacts(): array
+    {
+        $path = $this->getContactsFilePath();
+        if (! file_exists($path)) {
+            return [];
+        }
+
+        $content = @file_get_contents($path);
+        if ($content === false || trim($content) === '') {
+            return [];
+        }
+
+        $data = json_decode($content, true);
+
+        return is_array($data) ? $data : [];
+    }
+
+    protected function saveContacts(array $contacts): bool
+    {
+        $path = $this->getContactsFilePath();
+        $dir = dirname($path);
+        if (! is_dir($dir)) {
+            @mkdir($dir, 0755, true);
+        }
+
+        return (bool) @file_put_contents(
+            $path,
+            json_encode($contacts, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)
+        );
+    }
+
+    protected function normalizePhoneNumber(string $phone): string
+    {
+        $cleaned = preg_replace('/[^\d+]/', '', trim($phone));
+        if ($cleaned === null) {
+            return '';
+        }
+
+        if (str_starts_with($cleaned, '+')) {
+            $cleaned = substr($cleaned, 1);
+        }
+
+        if (preg_match('/^03\d{9}$/', $cleaned)) {
+            $cleaned = '92'.substr($cleaned, 1);
+        }
+
+        return $cleaned;
+    }
+
+    protected function toolSaveContact(string $name, string $phone, string $email = ''): array
+    {
+        $trimmedName = trim($name);
+        $trimmedPhone = trim($phone);
+        $trimmedEmail = trim($email);
+
+        if ($trimmedName === '') {
+            return ['success' => false, 'message' => 'Contact name is required.'];
+        }
+
+        if ($trimmedPhone === '' && $trimmedEmail === '') {
+            return ['success' => false, 'message' => 'Either a phone number or email address is required to save a contact.'];
+        }
+
+        $normalizedPhone = $trimmedPhone !== '' ? $this->normalizePhoneNumber($trimmedPhone) : '';
+        $contacts = $this->loadContacts();
+        $key = strtolower($trimmedName);
+
+        $contacts[$key] = [
+            'name' => $trimmedName,
+            'phone' => $normalizedPhone,
+            'original_phone' => $trimmedPhone,
+            'email' => $trimmedEmail,
+            'updated_at' => date('Y-m-d H:i:s'),
+        ];
+
+        if ($this->saveContacts($contacts)) {
+            $details = [];
+            if ($normalizedPhone !== '') {
+                $details[] = 'phone +'.$normalizedPhone;
+            }
+            if ($trimmedEmail !== '') {
+                $details[] = 'email '.$trimmedEmail;
+            }
+
+            return [
+                'success' => true,
+                'message' => sprintf("Contact '%s' saved with %s.", $trimmedName, implode(' and ', $details)),
+                'contact' => $contacts[$key],
+            ];
+        }
+
+        return ['success' => false, 'message' => 'Unable to save contact to storage.'];
+    }
+
+    protected function toolListContacts(string $filter = ''): array
+    {
+        $contacts = $this->loadContacts();
+        $trimmedFilter = strtolower(trim($filter));
+
+        if ($trimmedFilter !== '') {
+            $contacts = array_filter($contacts, function ($c, $key) use ($trimmedFilter) {
+                return str_contains((string) $key, $trimmedFilter)
+                    || str_contains(strtolower((string) ($c['name'] ?? '')), $trimmedFilter)
+                    || str_contains((string) ($c['phone'] ?? ''), $trimmedFilter)
+                    || str_contains(strtolower((string) ($c['email'] ?? '')), $trimmedFilter);
+            }, ARRAY_FILTER_USE_BOTH);
+        }
+
+        $list = array_values($contacts);
+        if (empty($list)) {
+            return [
+                'success' => true,
+                'count' => 0,
+                'contacts' => [],
+                'message' => $trimmedFilter !== ''
+                    ? sprintf("No contacts found matching '%s'.", $filter)
+                    : 'No saved contacts found in your address book.',
+            ];
+        }
+
+        $summary = array_map(function ($c) {
+            $parts = [$c['name']];
+            if (! empty($c['phone'])) {
+                $parts[] = '+'.$c['phone'];
+            }
+            if (! empty($c['email'])) {
+                $parts[] = $c['email'];
+            }
+
+            return implode(' (', $parts).(count($parts) > 1 ? ')' : '');
+        }, $list);
+
+        return [
+            'success' => true,
+            'count' => count($list),
+            'contacts' => $list,
+            'message' => sprintf('Found %d contact(s): %s.', count($list), implode(', ', array_slice($summary, 0, 10))),
+        ];
+    }
+
+    protected function toolSendWhatsAppMessage(string $recipient, string $message, bool $autoSend = false): array
+    {
+        $trimmedRecipient = trim($recipient);
+        $trimmedMessage = trim($message);
+
+        if ($trimmedRecipient === '') {
+            return ['success' => false, 'message' => 'Recipient name or phone number is required.'];
+        }
+
+        if ($trimmedMessage === '') {
+            return ['success' => false, 'message' => 'Message text is required.'];
+        }
+
+        $targetPhone = '';
+        $displayName = $trimmedRecipient;
+
+        $contacts = $this->loadContacts();
+        $key = strtolower($trimmedRecipient);
+
+        if (isset($contacts[$key]) && ! empty($contacts[$key]['phone'])) {
+            $targetPhone = $contacts[$key]['phone'];
+            $displayName = $contacts[$key]['name'];
+        } else {
+            foreach ($contacts as $cKey => $contact) {
+                if (str_contains($cKey, $key) || str_contains($key, $cKey)) {
+                    if (! empty($contact['phone'])) {
+                        $targetPhone = $contact['phone'];
+                        $displayName = $contact['name'] ?? $trimmedRecipient;
+                        break;
+                    }
+                }
+            }
+        }
+
+        if ($targetPhone === '') {
+            $cleaned = $this->normalizePhoneNumber($trimmedRecipient);
+            if (preg_match('/^\d{7,15}$/', $cleaned)) {
+                $targetPhone = $cleaned;
+            }
+        }
+
+        if ($targetPhone === '') {
+            return [
+                'success' => false,
+                'message' => sprintf("Contact '%s' was not found in your address book and is not a valid phone number. Please say the full phone number (e.g. 03001234567) or save the contact first.", $trimmedRecipient),
+            ];
+        }
+
+        $encodedText = rawurlencode($trimmedMessage);
+        $uri = sprintf('whatsapp://send?phone=%s&text=%s', $targetPhone, $encodedText);
+        $webUrl = sprintf('https://web.whatsapp.com/send?phone=%s&text=%s', $targetPhone, $encodedText);
+
+        $psUri = $this->powershellLiteral($uri);
+        $psWeb = $this->powershellLiteral($webUrl);
+
+        if ($autoSend) {
+            $script = "try { Start-Process $psUri -ErrorAction Stop } catch { Start-Process $psWeb }; "
+                .'Start-Sleep -Seconds 3; '
+                .'$wshell = New-Object -ComObject WScript.Shell; '
+                ."if (\$wshell.AppActivate('WhatsApp')) { "
+                .'  Start-Sleep -Milliseconds 600; '
+                ."  \$wshell.SendKeys('{ENTER}'); "
+                .'  Write-Output "Sent" '
+                .'} else { '
+                .'  Write-Output "Opened" '
+                .'}';
+        } else {
+            $script = "try { Start-Process $psUri -ErrorAction Stop; Write-Output 'Opened Desktop' } catch { Start-Process $psWeb; Write-Output 'Opened Web' }";
+        }
+
+        $result = $this->runPowerShell($script);
+
+        return [
+            'success' => true,
+            'message' => sprintf("WhatsApp opened for %s (+%s) with message: '%s'.", $displayName, $targetPhone, $trimmedMessage),
+            'recipient' => $displayName,
+            'phone' => $targetPhone,
+            'auto_send' => $autoSend,
+        ];
+    }
+
+    protected function toolComposeEmail(string $to, string $subject, string $body, string $provider = 'gmail'): array
+    {
+        $trimmedTo = trim($to);
+        $trimmedSubject = trim($subject);
+        $trimmedBody = trim($body);
+
+        if ($trimmedTo === '') {
+            return ['success' => false, 'message' => 'Recipient email or contact name is required.'];
+        }
+
+        $targetEmail = $trimmedTo;
+        $displayName = $trimmedTo;
+
+        $contacts = $this->loadContacts();
+        $key = strtolower($trimmedTo);
+
+        if (isset($contacts[$key]) && ! empty($contacts[$key]['email'])) {
+            $targetEmail = $contacts[$key]['email'];
+            $displayName = $contacts[$key]['name'];
+        } else {
+            foreach ($contacts as $cKey => $contact) {
+                if ((str_contains($cKey, $key) || str_contains($key, $cKey)) && ! empty($contact['email'])) {
+                    $targetEmail = $contact['email'];
+                    $displayName = $contact['name'] ?? $trimmedTo;
+                    break;
+                }
+            }
+        }
+
+        $encodedTo = rawurlencode($targetEmail);
+        $encodedSubject = rawurlencode($trimmedSubject);
+        $encodedBody = rawurlencode($trimmedBody);
+
+        if (strtolower($provider) === 'gmail') {
+            $url = sprintf('https://mail.google.com/mail/?view=cm&fs=1&to=%s&su=%s&body=%s', $encodedTo, $encodedSubject, $encodedBody);
+            $script = 'Start-Process '.$this->powershellLiteral($url);
+        } else {
+            $mailto = sprintf('mailto:%s?subject=%s&body=%s', $targetEmail, $encodedSubject, $encodedBody);
+            $script = 'Start-Process '.$this->powershellLiteral($mailto);
+        }
+
+        $result = $this->runPowerShell($script);
+
+        return [
+            'success' => true,
+            'message' => sprintf("Opened email draft to %s with subject '%s'.", $displayName, $trimmedSubject),
+            'to' => $targetEmail,
+            'subject' => $trimmedSubject,
+        ];
+    }
+
     protected function requiresConfirmation(string $toolName): bool
     {
         return in_array($toolName, ['system_power_action', 'kill_process'], true);
@@ -1828,6 +2202,10 @@ class OpenAIService
             'control_media' => $this->toolControlMedia((string) ($arguments['action'] ?? '')),
             'manage_windows' => $this->toolManageWindows((string) ($arguments['action'] ?? '')),
             'get_system_stats' => $this->toolGetSystemStats(),
+            'send_whatsapp_message' => $this->toolSendWhatsAppMessage((string) ($arguments['recipient'] ?? ''), (string) ($arguments['message'] ?? ''), (bool) ($arguments['auto_send'] ?? false)),
+            'save_contact' => $this->toolSaveContact((string) ($arguments['name'] ?? ''), (string) ($arguments['phone'] ?? ''), (string) ($arguments['email'] ?? '')),
+            'list_contacts' => $this->toolListContacts((string) ($arguments['filter'] ?? '')),
+            'compose_email' => $this->toolComposeEmail((string) ($arguments['to'] ?? ''), (string) ($arguments['subject'] ?? ''), (string) ($arguments['body'] ?? ''), (string) ($arguments['provider'] ?? 'gmail')),
             default => ['success' => false, 'message' => sprintf('Tool "%s" is not supported.', $toolName)],
         };
     }

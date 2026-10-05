@@ -21,6 +21,10 @@ class VoiceAgentController extends Controller
         If the user asks for media playback control (e.g. "pause music", "pause karo", "next song", "previous song", "resume play", "stop media"), use the control_media tool.
         If the user asks to manage desktop windows (e.g. "show desktop", "desktop dikhao", "minimize all", "restore windows", "active window close karo"), use the manage_windows tool.
         If the user asks about PC performance, CPU load, RAM memory usage, battery, or disk storage (e.g. "PC ki RAM kitni use ho rahi hai", "CPU kitna chal raha hai", "storage kitni bachi hai", "system status"), use the get_system_stats tool.
+        If the user asks to send a WhatsApp message or message someone (e.g. "Ali ko WhatsApp message karo...", "WhatsApp karo", "send message to 0300... on WhatsApp"), use the send_whatsapp_message tool.
+        If the user asks to save a contact or save someone's phone number or email (e.g. "Ali ka number save karo 03001234567"), use the save_contact tool.
+        If the user asks to check or list contacts (e.g. "mere contacts dikhao", "contacts list karo"), use the list_contacts tool.
+        If the user asks to compose or send an email (e.g. "Ali ko email karo...", "draft email to..."), use the compose_email tool.
         If the user asks for a desktop app, browser, VPN, file, or screenshot, use the appropriate tool.
         For Windows system controls such as volume, mute, brightness, Wi-Fi, Ethernet/network, Bluetooth, clipboard, settings, or process listing, use the matching system tool. If the user asks to turn off or turn on internet/network/Wi-Fi, use toggle_wifi or toggle_ethernet. Power actions and process termination require confirmation; ask the user to reply YES when the tool requests it.
         When a tool result asks for confirmation, do NOT call the tool again with an extra confirm parameter. Simply wait for the user's next reply; the system will detect the confirmation automatically.

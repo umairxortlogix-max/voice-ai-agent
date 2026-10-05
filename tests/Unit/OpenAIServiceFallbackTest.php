@@ -66,10 +66,71 @@ class OpenAIServiceFallbackTest extends TestCase
             'system_power_action', 'open_settings_page', 'get_clipboard', 'set_clipboard',
             'list_running_processes', 'kill_process', 'find_and_open_file', 'open_folder',
             'control_media', 'manage_windows', 'get_system_stats',
+            'send_whatsapp_message', 'save_contact', 'list_contacts', 'compose_email',
         ] as $toolName) {
             $this->assertArrayHasKey($toolName, $tools->all());
             $this->assertArrayHasKey('required', $tools[$toolName]['function']['parameters']);
         }
+    }
+
+    public function test_it_saves_lists_contacts_and_resolves_whatsapp_and_email(): void
+    {
+        $service = new OpenAIService;
+
+        // 1. Save contact
+        $saveResult = json_decode($service->executeTool('save_contact', [
+            'name' => 'Test Contact',
+            'phone' => '03001234567',
+            'email' => 'test@example.com',
+        ]), true);
+
+        $this->assertTrue($saveResult['success']);
+        $this->assertStringContainsString('Test Contact', $saveResult['message']);
+
+        // 2. List contact
+        $listResult = json_decode($service->executeTool('list_contacts', [
+            'filter' => 'Test Contact',
+        ]), true);
+
+        $this->assertTrue($listResult['success']);
+        $this->assertGreaterThanOrEqual(1, $listResult['count']);
+
+        // 3. WhatsApp dispatch with contact lookup
+        $waResult = json_decode($service->executeTool('send_whatsapp_message', [
+            'recipient' => 'Test Contact',
+            'message' => 'Hello from unit test',
+        ]), true);
+
+        $this->assertTrue($waResult['success']);
+        $this->assertSame('923001234567', $waResult['phone']);
+
+        // 4. WhatsApp with direct phone number
+        $directWaResult = json_decode($service->executeTool('send_whatsapp_message', [
+            'recipient' => '03129876543',
+            'message' => 'Direct number test',
+        ]), true);
+
+        $this->assertTrue($directWaResult['success']);
+        $this->assertSame('923129876543', $directWaResult['phone']);
+
+        // 5. WhatsApp unknown contact failure
+        $failResult = json_decode($service->executeTool('send_whatsapp_message', [
+            'recipient' => 'NonExistentPersonXYZ',
+            'message' => 'Test message',
+        ]), true);
+
+        $this->assertFalse($failResult['success']);
+        $this->assertStringContainsString('not found', strtolower($failResult['message']));
+
+        // 6. Compose email with contact
+        $emailResult = json_decode($service->executeTool('compose_email', [
+            'to' => 'Test Contact',
+            'subject' => 'Project Update',
+            'body' => 'All systems running smoothly.',
+        ]), true);
+
+        $this->assertTrue($emailResult['success']);
+        $this->assertSame('test@example.com', $emailResult['to']);
     }
 
     public function test_risky_tools_require_confirmation_and_protected_processes_are_blocked(): void

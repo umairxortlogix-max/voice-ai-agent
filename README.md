@@ -170,3 +170,76 @@ Example commands:
 - `PC shutdown kar do` -> confirmation maangega; `YES` ke baad 60-second shutdown schedule hoga.
 - `Chrome process band karo` -> confirmation maangega.
 - `explorer.exe band karo` -> hard-block hoga. `explorer.exe`, `csrss.exe`, `winlogon.exe`, `services.exe`, `System`, aur `svchost.exe` kabhi terminate nahi kiye ja sakte.
+
+## Communication & Messaging Tools (Implemented)
+
+System mein direct voice communication tools integrate kiye gaye hain:
+
+- **`send_whatsapp_message`**: Contact name ya direct phone number par WhatsApp message draft ya auto-send karta hai. Pakistani format (`03...`) ko automatically `+92...` international format mein convert karta hai.
+- **`save_contact`**: Voice se contact ka naam, phone number aur email address `storage/app/contacts.json` mein save karta hai.
+- **`list_contacts`**: Saved address book dekhne aur search karne ke liye.
+- **`compose_email`**: Recipient, subject aur body ke sath Gmail Web compose ya default OS mail client open karta hai.
+
+**Commands Examples:**
+- *"Ali ka number save karo 03001234567"*
+- *"Ali ko WhatsApp par message karo: Main 10 minute mein pohanch raha hoon"*
+- *"Mere contacts dikhao"*
+- *"Ali ko email draft karo: Subject 'Project Update', Body 'Meeting kal subah 11 baje hai'."*
+
+---
+
+## 🚀 Voice Automation Roadmap & Feature Ideas
+
+Yeh system ko full **Jarvis-style Autonomous Assistant** banane ke liye comprehensive feature ideas aur task categories hain:
+
+### 1. Macro Routines (Single Voice Command $\rightarrow$ Multi-step Actions)
+- **Developer / Work Mode:**
+  - *"Work mode on karo"* $\rightarrow$ VS Code, Laragon/Docker, Chrome tabs (GitHub, Localhost) open kare, Spotify par lo-fi play kare, aur volume/brightness adjust kare.
+- **Movie / Chill Mode:**
+  - *"Movie mode"* $\rightarrow$ Screen brightness 30% kare, YouTube/Netflix khole, work apps minimize kare.
+- **Good Night / Wrap Up:**
+  - *"Good night Jarvis"* $\rightarrow$ Unsaved temp files clean kare, brightness 0% kare, aur 5 minute timer ke baad PC sleep/shutdown par lagaye.
+- **Meeting / Focus Mode:**
+  - *"Meeting mode"* $\rightarrow$ Music mute kare, Do Not Disturb on kare, aur unnecessary background processes close kare.
+
+### 2. Developer Productivity & Laravel Workflows
+- **Voice Error Log Reader:**
+  - *"Latest error kya aya hai?"* $\rightarrow$ `storage/logs/laravel.log` parh kar summarize kare aur voice mein bataye ke kis file/line par issue hai.
+- **Git Voice Assistant:**
+  - *"Changes check karke quick commit aur push kar do"* $\rightarrow$ Git status scan kare, auto-commit message banaye aur push kare.
+- **Voice Test Runner:**
+  - *"Tests run karo"* $\rightarrow$ Background mein `php artisan test` execute kare aur passed/failed summary sunaye.
+
+### 3. Screen Vision & Troubleshooting (Multimodal)
+- **Screen Error Diagnostics:**
+  - *"Screen par kya error hai dekho"* $\rightarrow$ `take_screenshot` ke zariye current screen capture kare aur GPT-4o Vision se diagnose karke solution bataye.
+
+### 4. Smart File Organizer & Cleanup Automation
+- **Organize Downloads Folder:**
+  - *"Downloads folder organize karo"* $\rightarrow$ Files unki extension ke hisaab se auto-move kare (`.pdf` to Documents, `.png/.jpg` to Pictures, `.exe/.zip` to Installers).
+- **Large Files Hunter:**
+  - *"C drive mein barhi files dhundo"* $\rightarrow$ 1GB se barhi unnecessary files scan karke report de.
+
+### 5. Desktop Voice Dictation & RPA (Mouse/Keyboard Control)
+- **Active Window Auto-Typing:**
+  - *"Type karo: Meeting notes finalize ho gaye hain"* $\rightarrow$ Active window (Notepad, Word, VS Code) mein direct text type kar de (using PowerShell `SendKeys`).
+- **Presentation Controller:**
+  - Presentation ke waqt hands-free control: *"Next slide"*, *"Previous slide"*, *"Full screen"*.
+
+### 6. Voice Expense Tracker & Personal Notes
+- **Daily Expense Logger:**
+  - *"Expense add karo: 1500 petrol"* $\rightarrow$ SQLite database mein date aur category ke sath save kare.
+  - *"Is haftay total kitna kharcha hua?"* $\rightarrow$ Total calculate karke bol kar sunaye.
+- **Quick Voice Notes:**
+  - *"Note likho: Kal bank se cheque collect karna hai"* $\rightarrow$ Markdown / Notion file mein add kare.
+
+### 7. Live Web Intelligence & Tracking
+- **Currency & Crypto Rates:**
+  - *"Dollar aur Bitcoin ka live rate kya hai?"* $\rightarrow$ API se live rate fetch karke bataye.
+- **YouTube Video Summarizer:**
+  - Open YouTube link ka summary mangne par transcription analyze karke 2 minute mein khulasa sunaye.
+
+### 8. AI Interview & Practice Partner
+- **Laravel / Tech Mock Interview:**
+  - *"Laravel interview mode start karo"* $\rightarrow$ Ek ek question puche aur candidate ke voice answers par constructive feedback de.
+
